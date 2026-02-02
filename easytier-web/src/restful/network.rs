@@ -31,7 +31,7 @@ fn convert_rpc_error(e: RpcError) -> (StatusCode, Json<Error>) {
     (status_code, Json(error))
 }
 
-fn convert_error(e: RemoteClientError<DbErr>) -> (StatusCode, Json<Error>) {
+pub fn convert_error(e: RemoteClientError<DbErr>) -> (StatusCode, Json<Error>) {
     match e {
         RemoteClientError::PersistentError(e) => convert_db_error(e),
         RemoteClientError::RpcError(e) => convert_rpc_error(e),

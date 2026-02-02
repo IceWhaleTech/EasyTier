@@ -1,5 +1,6 @@
 mod auth;
 pub(crate) mod captcha;
+mod default_network;
 mod network;
 mod users;
 
@@ -16,6 +17,7 @@ use easytier::common::scoped_task::ScopedTask;
 use easytier::launcher::NetworkConfig;
 use easytier::proto::rpc_types;
 use network::NetworkApi;
+use default_network::NetworkDefaultApi;
 use sea_orm::DbErr;
 use tokio::net::TcpListener;
 use tower_sessions::cookie::time::Duration;
@@ -239,6 +241,7 @@ impl RestfulServer {
             .route("/api/v1/summary", get(Self::handle_get_summary))
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .merge(NetworkApi::build_route())
+            .merge(NetworkDefaultApi::build_route())
             .route_layer(login_required!(Backend))
             .merge(auth::router())
             .with_state(self.client_mgr.clone())
