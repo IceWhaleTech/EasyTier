@@ -25,6 +25,7 @@ mod db;
 mod migrator;
 mod restful;
 
+mod default;
 #[cfg(feature = "embed")]
 mod web;
 
