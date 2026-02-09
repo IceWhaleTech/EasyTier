@@ -6,14 +6,14 @@ pub type NetworkConfig = easytier::proto::api::manage::NetworkConfig;
 pub type NetworkIdentity = easytier::common::config::NetworkIdentity;
 
 mod ice_whale {
-    pub const TLD_DNS_ZONE: &'static str = ".ice-whale.io.";
+    pub const TLD_DNS_ZONE: &str = "ice-whale.io.";
     pub const THREAD_COUNT: usize = 4;
     pub const DHCP: bool = true;
 }
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 enum QuickTunnel {
-    QUIC,
-    KCP,
+    Quic,
+    Kcp,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -47,8 +47,8 @@ impl TryFrom<IceWhaleNetworkConfig> for NetworkConfig {
             .get() as u32;
         
         match config.quick_tunnel {
-            QuickTunnel::QUIC => flags.enable_quic_proxy = true,
-            QuickTunnel::KCP => flags.enable_kcp_proxy = true,
+            QuickTunnel::Quic=> flags.enable_quic_proxy = true,
+            QuickTunnel::Kcp => flags.enable_kcp_proxy = true,
         }
         cfg.set_flags(flags);
         cfg.add_proxy_cidr(get_default_cidr()?.parse()?, None)?;
@@ -80,8 +80,8 @@ mod tests {
                     peer_public_key: None,
                 },
             ],
-            tld_dns_zone: Some(".ice-whale.io.".to_string()),
-            quick_tunnel: QuickTunnel::QUIC,
+            tld_dns_zone: Some("ice-whale.io.".to_string()),
+            quick_tunnel: QuickTunnel::Quic,
         };
 
         let config = NetworkConfig::try_from(ice_config)?;
