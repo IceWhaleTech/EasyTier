@@ -1,0 +1,75 @@
+name: Build ZimaOS Sysroot
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_triple:
+        description: "Rust target triple"
+        required: true
+        default: "x86_64-unknown-linux-gnu"
+      web_features:
+        description: "Features for easytier-web build"
+        required: true
+        default: "embed"
+      core_features:
+        description: "Features for easytier-core build (optional)"
+        required: true
+        default: ""
+
+  push:
+    branches: ["develop", "main"]
+    paths:
+      - ".github/workflows/zimaos-sysroot.yml"
+      - "script/build_zimaos_sysroot.sh"
+      - "packaging/zimaos/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "easytier/**"
+      - "easytier-web/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-sysroot:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ""
+          shared-key: "zimaos-sysroot"
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust target
+        run: |
+          bash ./.github/workflows/install_rust.sh
+          TARGET_TRIPLE="${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}"
+          rustup target add "$TARGET_TRIPLE"
+
+      - name: Build sysroot
+        env:
+          TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          WEB_CARGO_FEATURES: ${{ github.event.inputs.web_features || 'embed' }}
+          CORE_CARGO_FEATURES: ${{ github.event.inputs.core_features || '' }}
+        run: bash ./script/build_zimaos_sysroot.sh
+
+      - name: Show artifact layout
+        run: |
+          ls -laR build/sysroot
+
+      - name: Upload sysroot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zimaos-sysroot-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          path: |
+            build/sysroot/**

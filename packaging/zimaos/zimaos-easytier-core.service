@@ -1,0 +1,13 @@
+[Unit]
+Description=ZimaOS EasyTier Core
+Wants=network-online.target
+After=network-online.target network.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/zimaos-easytier-core -c /etc/casaos/zimaos-easytier-core.conf
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
