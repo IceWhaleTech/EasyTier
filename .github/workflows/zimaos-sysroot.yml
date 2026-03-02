@@ -17,7 +17,7 @@ on:
         default: ""
 
   push:
-    branches: ["develop", "main"]
+    branches: ["develop", "main", "et"]
     paths:
       - ".github/workflows/zimaos-sysroot.yml"
       - "script/build_zimaos_sysroot.sh"
