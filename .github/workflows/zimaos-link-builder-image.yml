@@ -1,0 +1,51 @@
+name: Build ZimaOS Link Builder Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["develop", "main", "mt"]
+    paths:
+      - ".github/images/zimaos-link-builder/Dockerfile"
+      - ".github/workflows/zimaos-link-builder-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_REPO: ghcr.io/icewhaletech/easytier-zimaos-link-builder
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        env:
+          REF_TAG: ${{ github.ref_name }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SAFE_REF_TAG="${REF_TAG//\//-}"
+          docker build \
+            --pull \
+            -f .github/images/zimaos-link-builder/Dockerfile \
+            -t "${IMAGE_REPO}:${SHA_TAG}" \
+            -t "${IMAGE_REPO}:${SAFE_REF_TAG}" \
+            -t "${IMAGE_REPO}:latest" \
+            .
+
+      - name: Push image
+        env:
+          REF_TAG: ${{ github.ref_name }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SAFE_REF_TAG="${REF_TAG//\//-}"
+          docker push "${IMAGE_REPO}:${SHA_TAG}"
+          docker push "${IMAGE_REPO}:${SAFE_REF_TAG}"
+          docker push "${IMAGE_REPO}:latest"

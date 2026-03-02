@@ -1,0 +1,21 @@
+[Unit]
+Description=ZimaOS EasyTier Web Control
+Wants=network-online.target
+After=network-online.target network.service
+
+[Service]
+Type=simple
+Environment="ZIMAOS_EASYTIER_WEB_DB=/var/lib/casaos/et.db"
+Environment="ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PORT=22020"
+Environment="ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PROTOCOL=udp"
+Environment="ZIMAOS_EASYTIER_WEB_API_SERVER_PORT=41231"
+Environment="ZIMAOS_EASYTIER_WEB_API_SERVER_ADDR=127.0.0.1"
+Environment="ZIMAOS_EASYTIER_WEB_DISABLE_REGISTRATION=true"
+Environment="ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL=http://127.0.0.1:37815/.well-known/jwks.json"
+EnvironmentFile=-/etc/casaos/zimaos-easytier-web.conf
+ExecStart=/bin/sh -ec 'set -- /usr/bin/zimaos-easytier-web --db "$${ZIMAOS_EASYTIER_WEB_DB}" --config-server-port "$${ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PORT}" --config-server-protocol "$${ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PROTOCOL}" --api-server-port "$${ZIMAOS_EASYTIER_WEB_API_SERVER_PORT}" --api-server-addr "$${ZIMAOS_EASYTIER_WEB_API_SERVER_ADDR}"; [ "$${ZIMAOS_EASYTIER_WEB_DISABLE_REGISTRATION}" = "true" ] && set -- "$$@" --disable-registration; exec "$$@"'
+Restart=always
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 mod auth;
 pub(crate) mod captcha;
+mod meshtier;
 mod network;
 mod users;
 
@@ -243,6 +244,7 @@ impl RestfulServer {
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .merge(NetworkApi::build_route())
             .route_layer(login_required!(Backend))
+            .merge(meshtier::router())
             .merge(auth::router().layer(Extension(auth::FeatureFlags {
                 disable_registration: self.registration_disabled,
             })))

@@ -43,3 +43,11 @@ easytier-gui/src-tauri/*.sys
 
 .direnv
 .flake-profile
+misc
+et.db
+et.db-shm
+et.db-wal
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.zed
+

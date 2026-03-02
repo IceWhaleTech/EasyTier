@@ -1,0 +1,257 @@
+name: Build ZimaOS Link
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_triple:
+        description: "Rust target triple"
+        required: true
+        default: "x86_64-unknown-linux-gnu"
+      web_features:
+        description: "Features for easytier-web build"
+        required: true
+        default: "embed"
+      core_features:
+        description: "Features for easytier-core build (optional)"
+        required: true
+        default: ""
+
+  push:
+    branches: ["develop", "main", "mt"]
+    tags:
+      - "zimaos-link-v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-link:
+    permissions:
+      contents: read
+      packages: read
+    runs-on: [self-hosted, Linux, X64, easytier]
+    container:
+      image: ghcr.io/icewhaletech/easytier-zimaos-link-builder:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1000:1000
+    env:
+      PATH: /usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show build image toolchain
+        run: |
+          rustup --version
+          cargo --version
+          rustc --version
+          clang --version | sed -n '1p'
+          cc --version | sed -n '1p'
+          unzip -v | sed -n '1p'
+
+      - name: Build frontend assets for embed
+        uses: ./.github/actions/prepare-pnpm
+        with:
+          build_filter: "./easytier-web/*"
+          save_cache: "false"
+
+      - name: Check protoc availability
+        id: protoc-ready
+        run: |
+          if command -v protoc >/dev/null 2>&1; then
+            echo "need_setup=0" >> "$GITHUB_OUTPUT"
+            echo "protoc already available: $(protoc --version)"
+          else
+            echo "need_setup=1" >> "$GITHUB_OUTPUT"
+            echo "protoc not found, will install it"
+          fi
+
+      - name: Resolve protoc include path
+        id: protoc-include
+        if: steps.protoc-ready.outputs.need_setup == '0'
+        run: |
+          set -euo pipefail
+          protoc_path="$(command -v protoc)"
+          protoc_root="$(cd "$(dirname "${protoc_path}")/.." && pwd)"
+
+          for include_dir in "${PROTOC_INCLUDE:-}" \
+                             "${protoc_root}/include" \
+                             /usr/include \
+                             /usr/local/include \
+                             /github/home/.protoc/include; do
+            [[ -n "${include_dir}" ]] || continue
+            if [[ -f "${include_dir}/google/protobuf/timestamp.proto" ]]; then
+              echo "PROTOC_INCLUDE=${include_dir}" >> "$GITHUB_ENV"
+              echo "found=1" >> "$GITHUB_OUTPUT"
+              echo "Using PROTOC_INCLUDE=${include_dir}"
+              exit 0
+            fi
+          done
+          echo "found=0" >> "$GITHUB_OUTPUT"
+          echo "No protobuf include matched for existing protoc; will fallback to setup-protoc."
+
+      - name: Setup protoc
+        if: steps.protoc-ready.outputs.need_setup == '1' || steps.protoc-include.outputs.found == '0'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Rust toolchain and target
+        id: rust-ready
+        env:
+          TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+        run: |
+          set -euo pipefail
+
+          need_install=0
+          rustc_version="$(rustc --version | awk '{print $2}')"
+          if [[ ! "$rustc_version" =~ ^1\.93\. ]]; then
+            need_install=1
+            echo "rustc version $rustc_version does not match expected 1.93.x"
+          fi
+
+          if ! rustup target list --installed | grep -qx "$TARGET"; then
+            need_install=1
+            echo "target $TARGET missing from rustup installed targets"
+          fi
+
+          echo "need_install=${need_install}" >> "$GITHUB_OUTPUT"
+          if [[ "$need_install" == "0" ]]; then
+            echo "Rust toolchain and target already ready, skip install step"
+          fi
+
+      - name: Install Rust target
+        if: steps.rust-ready.outputs.need_install == '1'
+        env:
+          TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          GUI_TARGET: ""
+          OS: linux
+        run: |
+          bash ./.github/workflows/install_rust.sh
+
+      - name: Build link payload
+        env:
+          TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          WEB_CARGO_FEATURES: ${{ github.event.inputs.web_features || 'embed' }}
+          CORE_CARGO_FEATURES: ${{ github.event.inputs.core_features || '' }}
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+        run: |
+          export CARGO_BUILD_JOBS="$(nproc)"
+          echo "using CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}, codegen-units=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS}, lto=${CARGO_PROFILE_RELEASE_LTO}"
+          bash ./script/build_zimaos_sysroot.sh
+
+      - name: Show artifact layout
+        run: |
+          ls -laR build/sysroot
+
+      - name: Pack link bundle
+        env:
+          TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+        run: |
+          mkdir -p dist
+          tar -C build -czf "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz" sysroot
+          (
+            cd dist
+            sha256sum "zimaos-link-${TARGET_TRIPLE}.tar.gz" > "zimaos-link-${TARGET_TRIPLE}.tar.gz.sha256"
+          )
+
+      - name: Upload link artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zimaos-link-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          path: |
+            build/sysroot/**
+          compression-level: 0
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zimaos-link-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          path: |
+            dist/zimaos-link-*.tar.gz
+            dist/zimaos-link-*.tar.gz.sha256
+          compression-level: 0
+
+  publish-release:
+    needs: build-link
+    if: startsWith(github.ref, 'refs/tags/zimaos-link-v')
+    runs-on: [self-hosted, Linux, X64, easytier]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release package
+        uses: actions/download-artifact@v4
+        with:
+          name: zimaos-link-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          path: release_assets
+
+      - name: Generate custom release notes
+        env:
+          REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          PREV_TAG="$(git tag --list 'zimaos-link-v*' --sort=-version:refname | grep -Fxv "$TAG_NAME" | head -n1 || true)"
+
+          {
+            echo "## ZimaOS Link Release"
+            echo
+            echo "- Tag: \`$TAG_NAME\`"
+            echo "- Commit: [\`${COMMIT_SHA:0:7}\`](https://github.com/$REPO/commit/$COMMIT_SHA)"
+            echo "- Workflow Run: [#$RUN_ID](https://github.com/$REPO/actions/runs/$RUN_ID)"
+            echo
+            echo "### Assets"
+            echo
+            echo "| File | Size | SHA256 |"
+            echo "| --- | ---: | --- |"
+            for pkg in release_assets/*.tar.gz; do
+              [ -f "$pkg" ] || continue
+              base="$(basename "$pkg")"
+              size="$(du -h "$pkg" | awk '{print $1}')"
+              sha="$(cut -d ' ' -f1 "release_assets/${base}.sha256")"
+              echo "| \`$base\` | \`$size\` | \`$sha\` |"
+            done
+            echo
+            echo "<details>"
+            echo "<summary>Verify Package Integrity</summary>"
+            echo
+            echo '```bash'
+            echo "sha256sum -c zimaos-link-*.tar.gz.sha256"
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              echo "### Changes Since \`$PREV_TAG\`"
+              echo
+              git log --no-merges --pretty='- %s (%h)' "$PREV_TAG..$COMMIT_SHA" | sed '/^$/d'
+            else
+              echo "### Initial Release"
+              echo
+              echo "- First public release of ZimaOS link package."
+            fi
+          } > release_notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ZimaOS Link ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: |
+            release_assets/*

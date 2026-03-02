@@ -23,6 +23,7 @@ use mimalloc::MiMalloc;
 
 mod client_manager;
 mod db;
+mod gateway;
 mod migrator;
 mod restful;
 
@@ -152,7 +153,7 @@ impl LoggingConfigLoader for &Cli {
     }
 }
 
-pub fn get_listener_by_url(l: &url::Url) -> Result<Box<dyn TunnelListener>, Error> {
+pub(crate) fn get_listener_by_url(l: &url::Url) -> Result<Box<dyn TunnelListener>, Error> {
     Ok(match l.scheme() {
         "tcp" => Box::new(TcpTunnelListener::new(l.clone())),
         "udp" => Box::new(UdpTunnelListener::new(l.clone())),
@@ -245,6 +246,8 @@ async fn main() {
     .start()
     .await
     .unwrap();
+
+    gateway::register_route_to_gateway_if_needed(cli.api_server_addr, cli.api_server_port).await;
 
     #[cfg(feature = "embed")]
     let _web_server_task = if let Some(web_router) = web_router_static {
