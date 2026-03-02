@@ -32,6 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build frontend assets for embed
+        uses: ./.github/actions/prepare-pnpm
+        with:
+          build_filter: "./easytier-web/*"
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ""
