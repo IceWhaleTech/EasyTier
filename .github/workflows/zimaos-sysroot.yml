@@ -17,15 +17,7 @@ on:
         default: ""
 
   push:
-    branches: ["develop", "main", "et"]
-    paths:
-      - ".github/workflows/zimaos-sysroot.yml"
-      - "script/build_zimaos_sysroot.sh"
-      - "packaging/zimaos/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "easytier/**"
-      - "easytier-web/**"
+    branches: ["develop", "main", "mt"]
 
 env:
   CARGO_TERM_COLOR: always
