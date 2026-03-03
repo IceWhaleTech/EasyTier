@@ -1,4 +1,4 @@
-name: Build ZimaOS Sysroot
+name: Build ZimaOS Link
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
   push:
     branches: ["develop", "main", "mt"]
     tags:
-      - "zimaos-sysroot-v*"
+      - "zimaos-link-v*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,7 +29,7 @@ defaults:
     shell: bash
 
 jobs:
-  build-sysroot:
+  build-link:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ""
-          shared-key: "zimaos-sysroot"
+          shared-key: "zimaos-link"
 
       - name: Setup protoc
         uses: arduino/setup-protoc@v3
@@ -55,7 +55,7 @@ jobs:
           TARGET_TRIPLE="${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}"
           rustup target add "$TARGET_TRIPLE"
 
-      - name: Build sysroot
+      - name: Build link payload
         env:
           TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           WEB_CARGO_FEATURES: ${{ github.event.inputs.web_features || 'embed' }}
@@ -66,32 +66,32 @@ jobs:
         run: |
           ls -laR build/sysroot
 
-      - name: Pack sysroot
+      - name: Pack link bundle
         env:
           TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
         run: |
           mkdir -p dist
-          tar -C build -czf "dist/zimaos-sysroot-${TARGET_TRIPLE}.tar.gz" sysroot
-          sha256sum "dist/zimaos-sysroot-${TARGET_TRIPLE}.tar.gz" > "dist/zimaos-sysroot-${TARGET_TRIPLE}.tar.gz.sha256"
+          tar -C build -czf "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz" sysroot
+          sha256sum "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz" > "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz.sha256"
 
-      - name: Upload sysroot artifact
+      - name: Upload link artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zimaos-sysroot-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          name: zimaos-link-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           path: |
             build/sysroot/**
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: zimaos-sysroot-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          name: zimaos-link-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           path: |
-            dist/zimaos-sysroot-*.tar.gz
-            dist/zimaos-sysroot-*.tar.gz.sha256
+            dist/zimaos-link-*.tar.gz
+            dist/zimaos-link-*.tar.gz.sha256
 
   publish-release:
-    needs: build-sysroot
-    if: startsWith(github.ref, 'refs/tags/zimaos-sysroot-v')
+    needs: build-link
+    if: startsWith(github.ref, 'refs/tags/zimaos-link-v')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -104,7 +104,7 @@ jobs:
       - name: Download release package
         uses: actions/download-artifact@v4
         with:
-          name: zimaos-sysroot-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          name: zimaos-link-package-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           path: release_assets
 
       - name: Generate custom release notes
@@ -116,10 +116,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          PREV_TAG="$(git tag --list 'zimaos-sysroot-v*' --sort=-version:refname | grep -Fxv "$TAG_NAME" | head -n1 || true)"
+          PREV_TAG="$(git tag --list 'zimaos-link-v*' --sort=-version:refname | grep -Fxv "$TAG_NAME" | head -n1 || true)"
 
           {
-            echo "## ZimaOS Sysroot Release"
+            echo "## ZimaOS Link Release"
             echo
             echo "- Tag: \`$TAG_NAME\`"
             echo "- Commit: [\`${COMMIT_SHA:0:7}\`](https://github.com/$REPO/commit/$COMMIT_SHA)"
@@ -141,7 +141,7 @@ jobs:
             echo "<summary>Verify Package Integrity</summary>"
             echo
             echo '```bash'
-            echo "sha256sum -c zimaos-sysroot-*.tar.gz.sha256"
+            echo "sha256sum -c zimaos-link-*.tar.gz.sha256"
             echo '```'
             echo
             echo "</details>"
@@ -153,7 +153,7 @@ jobs:
             else
               echo "### Initial Release"
               echo
-              echo "- First public release of ZimaOS sysroot package."
+              echo "- First public release of ZimaOS link package."
             fi
           } > release_notes.md
 
@@ -161,7 +161,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: ZimaOS Sysroot ${{ github.ref_name }}
+          name: ZimaOS Link ${{ github.ref_name }}
           body_path: release_notes.md
           files: |
             release_assets/*
