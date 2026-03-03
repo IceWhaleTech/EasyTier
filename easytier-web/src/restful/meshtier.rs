@@ -206,6 +206,9 @@ async fn do_connect(
     let instance_id = zerotier_id_to_uuid(&zt_info.id)
         .map_err(|e| internal_error(format!("invalid zerotier id: {e}")))?;
 
+    // Keep meshtier as a single instance: always remove old meshtier instances before create.
+    clear_meshtier_networks(client_mgr, runtime.identity).await?;
+
     let cfg = default_mesh_network_config(instance_id, &zt_info.id, &zt_info.id);
     client_mgr
         .handle_run_network_instance(runtime.identity, cfg, true)
@@ -228,7 +231,7 @@ async fn do_disconnect(
         .await
         .map_err(internal_error)?;
 
-    clear_easytier_networks(client_mgr, runtime.identity).await?;
+    clear_meshtier_networks(client_mgr, runtime.identity).await?;
 
     Ok(MeshResponse {
         id: String::new(),
@@ -245,7 +248,7 @@ async fn do_reset(
     headers: &HeaderMap,
 ) -> Result<MeshResponse, HttpHandleError> {
     let runtime = MeshRuntime::from_request(client_mgr, auth_session, headers, query).await?;
-    clear_easytier_networks(client_mgr, runtime.identity).await?;
+    clear_meshtier_networks(client_mgr, runtime.identity).await?;
     runtime
         .zerotier
         .set_status(MeshStatus::Reset)
@@ -275,6 +278,15 @@ async fn wait_easytier_online(
             };
 
             if !node_info.running {
+                if let Some(error_msg) = node_info
+                    .error_msg
+                    .clone()
+                    .filter(|msg| !msg.trim().is_empty())
+                {
+                    break Err(internal_error(format!(
+                        "easytier instance startup failed: {error_msg}"
+                    )));
+                }
                 continue;
             }
 
@@ -285,14 +297,14 @@ async fn wait_easytier_online(
     .map_err(|_| internal_error("wait easytier online timeout"))?
 }
 
-async fn clear_easytier_networks(
+async fn clear_meshtier_networks(
     client_mgr: &ClientManager,
     identity: SessionIdentity,
 ) -> Result<(), HttpHandleError> {
     let mut network_ids = BTreeSet::new();
 
     if let Ok(info) = client_mgr.handle_collect_network_info(identity, None).await {
-        add_running_network_ids(&mut network_ids, info);
+        add_running_meshtier_network_ids(&mut network_ids, info);
     }
 
     let saved_networks: Vec<user_running_network_configs::Model> = client_mgr
@@ -303,7 +315,9 @@ async fn clear_easytier_networks(
 
     for network in saved_networks {
         if let Ok(inst_id) = uuid::Uuid::parse_str(network.get_network_inst_id()) {
-            network_ids.insert(inst_id);
+            if is_meshtier_instance(&inst_id) {
+                network_ids.insert(inst_id);
+            }
         }
     }
 
@@ -317,7 +331,7 @@ async fn clear_easytier_networks(
         .map_err(convert_remote_error)
 }
 
-fn add_running_network_ids(
+fn add_running_meshtier_network_ids(
     network_ids: &mut BTreeSet<uuid::Uuid>,
     response: CollectNetworkInfoResponse,
 ) {
@@ -327,9 +341,15 @@ fn add_running_network_ids(
 
     for inst_id in info_map.map.keys() {
         if let Ok(uuid) = uuid::Uuid::parse_str(inst_id) {
-            network_ids.insert(uuid);
+            if is_meshtier_instance(&uuid) {
+                network_ids.insert(uuid);
+            }
         }
     }
+}
+
+fn is_meshtier_instance(inst_id: &uuid::Uuid) -> bool {
+    inst_id.as_bytes()[..8] == MESH_TIER_PREFIX
 }
 
 fn find_network_info(
