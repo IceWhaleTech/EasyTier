@@ -56,18 +56,35 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Ensure rustup is available
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" --version
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" --version
+
       - name: Install Rust target
+        env:
+          TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+          GUI_TARGET: ""
+          OS: ubuntu-22.04
         run: |
           bash ./.github/workflows/install_rust.sh
-          TARGET_TRIPLE="${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}"
-          rustup target add "$TARGET_TRIPLE"
 
       - name: Build link payload
         env:
           TARGET_TRIPLE: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           WEB_CARGO_FEATURES: ${{ github.event.inputs.web_features || 'embed' }}
           CORE_CARGO_FEATURES: ${{ github.event.inputs.core_features || '' }}
-        run: bash ./script/build_zimaos_sysroot.sh
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+        run: |
+          export CARGO_BUILD_JOBS="$(nproc)"
+          echo "using CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}, codegen-units=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS}, lto=${CARGO_PROFILE_RELEASE_LTO}"
+          bash ./script/build_zimaos_sysroot.sh
 
       - name: Show artifact layout
         run: |
