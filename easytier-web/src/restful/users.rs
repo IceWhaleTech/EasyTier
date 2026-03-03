@@ -18,6 +18,15 @@ pub struct User {
     pub tokens: Vec<String>,
 }
 
+impl User {
+    fn from_db_user(db_user: entity::users::Model) -> Self {
+        Self {
+            tokens: vec![db_user.username.clone()],
+            db_user,
+        }
+    }
+}
+
 // Here we've implemented `Debug` manually to avoid accidentally logging the
 // password hash.
 impl std::fmt::Debug for User {
@@ -160,10 +169,7 @@ impl AuthnBackend for Backend {
             // input with an argon2 password hash.
             Ok(user
                 .filter(|user| verify_password(creds.password, &user.password).is_ok())
-                .map(|user| User {
-                    db_user: user.clone(),
-                    tokens: vec![user.username.clone()],
-                }))
+                .map(User::from_db_user))
         })
         .await?
     }
@@ -175,13 +181,7 @@ impl AuthnBackend for Backend {
             .await?;
 
         if let Some(u) = &mut user {
-            let mut user = User {
-                db_user: u.clone(),
-                tokens: vec![],
-            };
-            // username is a token
-            user.tokens.push(u.username.clone());
-            Ok(Some(user))
+            Ok(Some(User::from_db_user(u.clone())))
         } else {
             Ok(None)
         }

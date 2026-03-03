@@ -9,10 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::restful::users::Backend;
 
-use super::{
-    users::{AuthSession, Credentials},
-    AppStateInner,
-};
+use super::users::{AuthSession, Credentials};
+use super::AppStateInner;
 
 /// Feature flags for the web server
 #[derive(Clone, Default)]
@@ -27,15 +25,15 @@ pub struct LoginResult {
 }
 
 pub fn router() -> Router<AppStateInner> {
-    let r = Router::new()
+    let protected = Router::new()
         .route("/api/v1/auth/password", put(self::put::change_password))
+        .route_layer(login_required!(Backend));
+    Router::new()
+        .merge(protected)
         .route(
             "/api/v1/auth/check_login_status",
             get(self::get::check_login_status),
         )
-        .route_layer(login_required!(Backend));
-    Router::new()
-        .merge(r)
         .route("/api/v1/auth/login", post(self::post::login))
         .route("/api/v1/auth/logout", get(self::get::logout))
         .route("/api/v1/auth/captcha", get(self::get::get_captcha))
@@ -194,12 +192,12 @@ mod get {
         auth_session: AuthSession,
     ) -> Result<Json<Void>, HttpHandleError> {
         if auth_session.user.is_some() {
-            Ok(Json(Void::default()))
-        } else {
-            Err((
-                StatusCode::UNAUTHORIZED,
-                Json::from(other_error("Not logged in")),
-            ))
+            return Ok(Json(Void::default()));
         }
+
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Json::from(other_error("Not logged in")),
+        ))
     }
 }
