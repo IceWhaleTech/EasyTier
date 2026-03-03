@@ -159,6 +159,18 @@ impl NetworkApi {
         auth_session: AuthSession,
         State(client_mgr): AppState,
         Path(machine_id): Path<uuid::Uuid>,
+    ) -> Result<Json<CollectNetworkInfoResponse>, HttpHandleError> {
+        Ok(client_mgr
+            .handle_collect_network_info((Self::get_user_id(&auth_session)?, machine_id), None)
+            .await
+            .map_err(convert_error)?
+            .into())
+    }
+
+    async fn handle_collect_network_info_by_ids(
+        auth_session: AuthSession,
+        State(client_mgr): AppState,
+        Path(machine_id): Path<uuid::Uuid>,
         Json(payload): Json<CollectNetworkInfoJsonReq>,
     ) -> Result<Json<CollectNetworkInfoResponse>, HttpHandleError> {
         Ok(client_mgr
@@ -312,7 +324,8 @@ impl NetworkApi {
             )
             .route(
                 "/api/v1/machines/:machine-id/networks/info",
-                get(Self::handle_collect_network_info),
+                get(Self::handle_collect_network_info)
+                    .post(Self::handle_collect_network_info_by_ids),
             )
             .route(
                 "/api/v1/machines/:machine-id/networks/info/:inst-id",
