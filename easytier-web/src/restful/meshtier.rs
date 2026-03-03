@@ -38,6 +38,7 @@ const DEFAULT_ZEROTIER_SERVICE_URL: &str = "http://localhost/";
 const DEFAULT_HOSTNAME: &str = "mesh-node";
 const EASYTIER_WAIT_TIMEOUT_SECS: u64 = 30;
 const EASYTIER_POLL_INTERVAL_MS: u64 = 300;
+const EASYTIER_ADMIN_TOKEN: &str = "admin";
 
 const MESH_TIER_PREFIX: [u8; 8] = *b"meshtier";
 const MESH_AUTH_JWKS_URL_ENV: &str = "ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL";
@@ -722,30 +723,31 @@ impl MeshRuntime {
         headers: &HeaderMap,
         query: Option<&str>,
     ) -> Result<Self, HttpHandleError> {
-        let user_id = resolve_user_id(client_mgr, auth_session, headers, query).await?;
+        resolve_user_id(client_mgr, auth_session, headers, query).await?;
         let authorization = extract_authorization(headers, query)?;
-        let identity = pick_user_identity(client_mgr, user_id).await?;
+        let identity = pick_admin_identity(client_mgr).await?;
         let zerotier = ZeroTierClient::new(parse_zerotier_base_url()?, authorization);
         Ok(Self { identity, zerotier })
     }
 }
 
-async fn pick_user_identity(
+async fn pick_admin_identity(
     client_mgr: &ClientManager,
-    user_id: UserIdInDb,
 ) -> Result<SessionIdentity, HttpHandleError> {
     let mut sessions = client_mgr.list_sessions().await;
-    sessions.retain(|s| s.user_id == user_id);
     sessions.sort_by(|a, b| a.machine_id.to_string().cmp(&b.machine_id.to_string()));
-    let Some(first) = sessions.into_iter().next() else {
+    let Some(admin) = sessions
+        .into_iter()
+        .find(|s| s.token == EASYTIER_ADMIN_TOKEN)
+    else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(other_error(
-                "no online easytier client session for authenticated user",
-            )),
+            Json(other_error(format!(
+                "no online easytier-core session with token '{EASYTIER_ADMIN_TOKEN}'",
+            ))),
         ));
     };
-    Ok((first.user_id, first.machine_id))
+    Ok((admin.user_id, admin.machine_id))
 }
 
 impl ZeroTierClient {
