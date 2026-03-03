@@ -72,7 +72,10 @@ jobs:
         run: |
           mkdir -p dist
           tar -C build -czf "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz" sysroot
-          sha256sum "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz" > "dist/zimaos-link-${TARGET_TRIPLE}.tar.gz.sha256"
+          (
+            cd dist
+            sha256sum "zimaos-link-${TARGET_TRIPLE}.tar.gz" > "zimaos-link-${TARGET_TRIPLE}.tar.gz.sha256"
+          )
 
       - name: Upload link artifact
         uses: actions/upload-artifact@v4
