@@ -1,11 +1,12 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use axum::{
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode, Uri},
     routing::{get, post, put},
     Json, Router,
 };
+use axum_login::AuthUser;
 use easytier::{
     launcher::{NetworkConfig, NetworkingMethod},
     proto::{
@@ -16,9 +17,11 @@ use easytier::{
         ListNetworkProps, PersistentConfig, RemoteClientError, RemoteClientManager, Storage,
     },
 };
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use reqwest::{Client, Method, Url};
 use sea_orm::DbErr;
 use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 use tokio::time::{interval, timeout};
 
 use crate::{
@@ -26,7 +29,10 @@ use crate::{
     db::{entity::user_running_network_configs, UserIdInDb},
 };
 
-use super::{convert_db_error, other_error, AppState, AppStateInner, Error, HttpHandleError};
+use super::{
+    convert_db_error, other_error, users::AuthSession, AppState, AppStateInner, Error,
+    HttpHandleError,
+};
 
 const DEFAULT_ZEROTIER_SERVICE_URL: &str = "http://localhost/";
 const DEFAULT_HOSTNAME: &str = "mesh-node";
@@ -34,6 +40,10 @@ const EASYTIER_WAIT_TIMEOUT_SECS: u64 = 30;
 const EASYTIER_POLL_INTERVAL_MS: u64 = 300;
 
 const MESH_TIER_PREFIX: [u8; 8] = *b"meshtier";
+const MESH_AUTH_JWKS_URL_ENV: &str = "ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL";
+const AUTH_JWKS_URL_ENV: &str = "AUTH_JWKS_URL";
+
+static JWT_VERIFIER: OnceCell<Arc<JwtVerifier>> = OnceCell::const_new();
 
 type SessionIdentity = (UserIdInDb, uuid::Uuid);
 type ApiResult = Result<Json<MeshResponse>, HttpHandleError>;
@@ -71,6 +81,35 @@ struct ZeroTierClient {
     authorization: String,
 }
 
+#[derive(Debug, Clone)]
+struct AuthenticatedUser {
+    id: UserIdInDb,
+}
+
+#[derive(Clone)]
+struct JwtVerifier {
+    decoding_key: DecodingKey,
+    validation: Validation,
+}
+
+#[derive(Debug, Deserialize)]
+struct JwtClaims {
+    id: UserIdInDb,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jwks {
+    keys: Vec<Jwk>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jwk {
+    kty: String,
+    crv: String,
+    x: String,
+    y: String,
+}
+
 pub fn router() -> Router<AppStateInner> {
     Router::new()
         .route("/mt/ping", get(api_ping))
@@ -85,44 +124,77 @@ pub fn router() -> Router<AppStateInner> {
         .route("/api/v1/mesh/disconnect", post(api_mesh_disconnect))
 }
 
-async fn api_ping() -> &'static str {
-    "pong"
+async fn api_ping(
+    auth_session: AuthSession,
+    State(client_mgr): AppState,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Result<&'static str, HttpHandleError> {
+    resolve_user_id(client_mgr.as_ref(), &auth_session, &headers, uri.query()).await?;
+    Ok("pong")
 }
 
-async fn api_mesh_info(State(client_mgr): AppState, headers: HeaderMap) -> ApiResult {
-    let runtime = MeshRuntime::from_headers(client_mgr.as_ref(), &headers).await?;
+async fn api_mesh_info(
+    auth_session: AuthSession,
+    State(client_mgr): AppState,
+    uri: Uri,
+    headers: HeaderMap,
+) -> ApiResult {
+    let runtime =
+        MeshRuntime::from_request(client_mgr.as_ref(), &auth_session, &headers, uri.query())
+            .await?;
     let response = runtime.zerotier.get_info().await.map_err(internal_error)?;
     Ok(Json(response))
 }
 
 async fn api_mesh_status(
+    auth_session: AuthSession,
     State(client_mgr): AppState,
+    uri: Uri,
     headers: HeaderMap,
     Json(payload): Json<MeshStatusRequest>,
 ) -> ApiResult {
     let response = match payload.status {
-        MeshStatus::Online => do_connect(client_mgr.as_ref(), &headers).await?,
-        MeshStatus::Offline => do_disconnect(client_mgr.as_ref(), &headers).await?,
-        MeshStatus::Reset => do_reset(client_mgr.as_ref(), &headers).await?,
+        MeshStatus::Online => {
+            do_connect(client_mgr.as_ref(), &auth_session, uri.query(), &headers).await?
+        }
+        MeshStatus::Offline => {
+            do_disconnect(client_mgr.as_ref(), &auth_session, uri.query(), &headers).await?
+        }
+        MeshStatus::Reset => {
+            do_reset(client_mgr.as_ref(), &auth_session, uri.query(), &headers).await?
+        }
     };
     Ok(Json(response))
 }
 
-async fn api_mesh_connect(State(client_mgr): AppState, headers: HeaderMap) -> ApiResult {
-    let response = do_connect(client_mgr.as_ref(), &headers).await?;
+async fn api_mesh_connect(
+    auth_session: AuthSession,
+    State(client_mgr): AppState,
+    uri: Uri,
+    headers: HeaderMap,
+) -> ApiResult {
+    let response = do_connect(client_mgr.as_ref(), &auth_session, uri.query(), &headers).await?;
     Ok(Json(response))
 }
 
-async fn api_mesh_disconnect(State(client_mgr): AppState, headers: HeaderMap) -> ApiResult {
-    let response = do_disconnect(client_mgr.as_ref(), &headers).await?;
+async fn api_mesh_disconnect(
+    auth_session: AuthSession,
+    State(client_mgr): AppState,
+    uri: Uri,
+    headers: HeaderMap,
+) -> ApiResult {
+    let response = do_disconnect(client_mgr.as_ref(), &auth_session, uri.query(), &headers).await?;
     Ok(Json(response))
 }
 
 async fn do_connect(
     client_mgr: &ClientManager,
+    auth_session: &AuthSession,
+    query: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<MeshResponse, HttpHandleError> {
-    let runtime = MeshRuntime::from_headers(client_mgr, headers).await?;
+    let runtime = MeshRuntime::from_request(client_mgr, auth_session, headers, query).await?;
     runtime.zerotier.connect().await.map_err(internal_error)?;
 
     let zt_info = runtime
@@ -144,9 +216,11 @@ async fn do_connect(
 
 async fn do_disconnect(
     client_mgr: &ClientManager,
+    auth_session: &AuthSession,
+    query: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<MeshResponse, HttpHandleError> {
-    let runtime = MeshRuntime::from_headers(client_mgr, headers).await?;
+    let runtime = MeshRuntime::from_request(client_mgr, auth_session, headers, query).await?;
     runtime
         .zerotier
         .disconnect()
@@ -165,9 +239,11 @@ async fn do_disconnect(
 
 async fn do_reset(
     client_mgr: &ClientManager,
+    auth_session: &AuthSession,
+    query: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<MeshResponse, HttpHandleError> {
-    let runtime = MeshRuntime::from_headers(client_mgr, headers).await?;
+    let runtime = MeshRuntime::from_request(client_mgr, auth_session, headers, query).await?;
     clear_easytier_networks(client_mgr, runtime.identity).await?;
     runtime
         .zerotier
@@ -364,27 +440,177 @@ fn uuid_to_zerotier_id(instance_id: &str) -> Result<String, String> {
     Ok(format!("{:016x}", u64::from_be_bytes(zt)))
 }
 
-fn extract_authorization(headers: &HeaderMap) -> Result<String, HttpHandleError> {
-    let value = headers.get(header::AUTHORIZATION).ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(other_error("missing Authorization header")),
-    ))?;
+fn extract_authorization(
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> Result<String, HttpHandleError> {
+    if let Some(raw) = read_authorization_header(headers)? {
+        return Ok(raw);
+    }
 
-    let value = value.to_str().map_err(|_| {
+    let token = parse_query_token(query).ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(other_error(
+            "missing Authorization header and token query parameter",
+        )),
+    ))?;
+    Ok(format!("Bearer {token}"))
+}
+
+fn extract_token(
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> Result<Option<String>, HttpHandleError> {
+    let authorization = read_authorization_header(headers)?;
+    Ok(parse_authorization_token(authorization.as_deref()).or_else(|| parse_query_token(query)))
+}
+
+fn read_authorization_header(headers: &HeaderMap) -> Result<Option<String>, HttpHandleError> {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+
+    let raw = value.to_str().map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             Json(other_error("invalid Authorization header")),
         )
     })?;
 
-    if value.trim().is_empty() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(other_error("Authorization header is empty")),
         ));
     }
 
-    Ok(value.to_string())
+    Ok(Some(trimmed.to_string()))
+}
+
+fn parse_authorization_token(authorization_header: Option<&str>) -> Option<String> {
+    let raw = authorization_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if raw.len() > 7 && raw[..7].eq_ignore_ascii_case("bearer ") {
+        let token = raw[7..].trim();
+        return (!token.is_empty()).then(|| token.to_string());
+    }
+
+    Some(raw.to_string())
+}
+
+fn parse_query_token(query: Option<&str>) -> Option<String> {
+    let query = query?;
+    url::form_urlencoded::parse(query.as_bytes()).find_map(|(key, value)| {
+        if key == "token" && !value.is_empty() {
+            Some(value.into_owned())
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_gateway_user_id(headers: &HeaderMap) -> Result<Option<UserIdInDb>, HttpHandleError> {
+    for name in ["user_id", "x-user-id"] {
+        let Some(value) = headers.get(name) else {
+            continue;
+        };
+
+        let raw = value.to_str().map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(other_error("invalid user_id header")),
+            )
+        })?;
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(other_error("user_id header is empty")),
+            ));
+        }
+
+        let user_id = raw.parse::<UserIdInDb>().map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(other_error("user_id header is not a valid integer")),
+            )
+        })?;
+        return Ok(Some(user_id));
+    }
+
+    Ok(None)
+}
+
+fn find_auth_jwks_url() -> Option<String> {
+    [MESH_AUTH_JWKS_URL_ENV, AUTH_JWKS_URL_ENV]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+async fn get_jwt_verifier() -> Result<Arc<JwtVerifier>, HttpHandleError> {
+    let jwks_url = find_auth_jwks_url().ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(other_error(format!(
+            "missing JWKS URL env var, set {} or {}",
+            MESH_AUTH_JWKS_URL_ENV, AUTH_JWKS_URL_ENV
+        ))),
+    ))?;
+
+    JWT_VERIFIER
+        .get_or_try_init(|| async move {
+            JwtVerifier::from_jwks_url(&jwks_url)
+                .await
+                .map(Arc::new)
+                .map_err(|err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(other_error(format!(
+                            "failed to initialize JWT verifier from {jwks_url}: {err}",
+                        ))),
+                    )
+                })
+        })
+        .await
+        .cloned()
+}
+
+async fn resolve_user_id(
+    _client_mgr: &ClientManager,
+    auth_session: &AuthSession,
+    headers: &HeaderMap,
+    query: Option<&str>,
+) -> Result<UserIdInDb, HttpHandleError> {
+    if let Some(user) = auth_session.user.as_ref() {
+        return Ok(user.id());
+    }
+
+    let token = extract_token(headers, query)?
+        .ok_or((StatusCode::UNAUTHORIZED, Json(other_error("missing token"))))?;
+
+    let verifier = get_jwt_verifier().await?;
+    let auth_user = verifier.verify(&token).map_err(|err| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(other_error(format!("invalid token: {err}"))),
+        )
+    })?;
+
+    if let Some(user_id) = parse_gateway_user_id(headers)? {
+        if user_id != auth_user.id {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(other_error("user_id header does not match token claims")),
+            ));
+        }
+    }
+
+    Ok(auth_user.id)
 }
 
 fn parse_zerotier_base_url() -> Result<Url, HttpHandleError> {
@@ -392,6 +618,57 @@ fn parse_zerotier_base_url() -> Result<Url, HttpHandleError> {
         .unwrap_or_else(|_| DEFAULT_ZEROTIER_SERVICE_URL.to_string());
     raw.parse::<Url>()
         .map_err(|e| internal_error(format!("Invalid ZEROTIER_SERVICE_URL: {e}")))
+}
+
+impl JwtVerifier {
+    async fn from_jwks_url(jwks_url: &str) -> anyhow::Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))?;
+
+        let jwks = client
+            .get(jwks_url)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to fetch JWKS from {jwks_url}: {e}"))?
+            .error_for_status()
+            .map_err(|e| anyhow::anyhow!("JWKS endpoint returned non-success status: {e}"))?
+            .json::<Jwks>()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to parse JWKS response: {e}"))?;
+
+        let key = jwks
+            .keys
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no keys found in JWKS"))?;
+
+        if key.kty != "EC" || key.crv != "P-256" {
+            return Err(anyhow::anyhow!(
+                "unexpected JWK type: kty={}, crv={}, expected EC/P-256",
+                key.kty,
+                key.crv
+            ));
+        }
+
+        let decoding_key = DecodingKey::from_ec_components(&key.x, &key.y)
+            .map_err(|e| anyhow::anyhow!("failed to build decoding key from JWKS: {e}"))?;
+        let mut validation = Validation::new(Algorithm::ES256);
+        validation.validate_nbf = true;
+
+        Ok(Self {
+            decoding_key,
+            validation,
+        })
+    }
+
+    fn verify(&self, token: &str) -> anyhow::Result<AuthenticatedUser> {
+        let token_data = decode::<JwtClaims>(token, &self.decoding_key, &self.validation)
+            .map_err(|e| anyhow::anyhow!("token verification failed: {e}"))?;
+        Ok(AuthenticatedUser {
+            id: token_data.claims.id,
+        })
+    }
 }
 
 fn internal_error(err: impl std::fmt::Display) -> HttpHandleError {
@@ -439,28 +716,33 @@ struct MeshRuntime {
 }
 
 impl MeshRuntime {
-    async fn from_headers(
+    async fn from_request(
         client_mgr: &ClientManager,
+        auth_session: &AuthSession,
         headers: &HeaderMap,
+        query: Option<&str>,
     ) -> Result<Self, HttpHandleError> {
-        let authorization = extract_authorization(headers)?;
-        let identity = pick_first_identity(client_mgr).await?;
+        let user_id = resolve_user_id(client_mgr, auth_session, headers, query).await?;
+        let authorization = extract_authorization(headers, query)?;
+        let identity = pick_user_identity(client_mgr, user_id).await?;
         let zerotier = ZeroTierClient::new(parse_zerotier_base_url()?, authorization);
         Ok(Self { identity, zerotier })
     }
 }
 
-async fn pick_first_identity(
+async fn pick_user_identity(
     client_mgr: &ClientManager,
+    user_id: UserIdInDb,
 ) -> Result<SessionIdentity, HttpHandleError> {
     let mut sessions = client_mgr.list_sessions().await;
-    sessions.sort_by(|a, b| {
-        (a.user_id, a.machine_id.to_string()).cmp(&(b.user_id, b.machine_id.to_string()))
-    });
+    sessions.retain(|s| s.user_id == user_id);
+    sessions.sort_by(|a, b| a.machine_id.to_string().cmp(&b.machine_id.to_string()));
     let Some(first) = sessions.into_iter().next() else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(other_error("no online easytier client session")),
+            Json(other_error(
+                "no online easytier client session for authenticated user",
+            )),
         ));
     };
     Ok((first.user_id, first.machine_id))
@@ -542,7 +824,12 @@ impl ZeroTierClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{uuid_to_zerotier_id, zerotier_id_to_uuid};
+    use axum::http::{header, HeaderMap, HeaderValue};
+
+    use super::{
+        extract_authorization, extract_token, parse_authorization_token, uuid_to_zerotier_id,
+        zerotier_id_to_uuid,
+    };
 
     #[test]
     fn codec_roundtrip_is_lossless() {
@@ -555,5 +842,43 @@ mod tests {
     #[test]
     fn codec_rejects_invalid_len() {
         assert!(zerotier_id_to_uuid("abc").is_err());
+    }
+
+    #[test]
+    fn parse_bearer_token_from_authorization_header() {
+        let token = parse_authorization_token(Some("Bearer abc.def.ghi"));
+        assert_eq!(token.as_deref(), Some("abc.def.ghi"));
+    }
+
+    #[test]
+    fn parse_raw_token_from_authorization_header() {
+        let token = parse_authorization_token(Some("abc.def.ghi"));
+        assert_eq!(token.as_deref(), Some("abc.def.ghi"));
+    }
+
+    #[test]
+    fn extract_token_from_query_when_header_missing() {
+        let headers = HeaderMap::new();
+        let token = extract_token(&headers, Some("token=abc.def.ghi")).unwrap();
+        assert_eq!(token.as_deref(), Some("abc.def.ghi"));
+    }
+
+    #[test]
+    fn fallback_query_token_to_bearer_authorization() {
+        let headers = HeaderMap::new();
+        let authorization = extract_authorization(&headers, Some("token=abc.def.ghi")).unwrap();
+        assert_eq!(authorization, "Bearer abc.def.ghi");
+    }
+
+    #[test]
+    fn keep_raw_authorization_header_for_upstream() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer header.token.value"),
+        );
+        let authorization =
+            extract_authorization(&headers, Some("token=query.token.value")).unwrap();
+        assert_eq!(authorization, "Bearer header.token.value");
     }
 }

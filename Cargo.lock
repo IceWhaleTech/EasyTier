@@ -2429,6 +2429,7 @@ dependencies = [
  "easytier",
  "image 0.24.9",
  "imageproc",
+ "jsonwebtoken",
  "maxminddb",
  "mimalloc",
  "once_cell",

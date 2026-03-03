@@ -5,6 +5,13 @@ After=network-online.target network.service
 
 [Service]
 Type=simple
+Environment="ZIMAOS_EASYTIER_WEB_DB=/var/lib/casaos/et.db"
+Environment="ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PORT=22020"
+Environment="ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PROTOCOL=udp"
+Environment="ZIMAOS_EASYTIER_WEB_API_SERVER_PORT=41231"
+Environment="ZIMAOS_EASYTIER_WEB_API_SERVER_ADDR=127.0.0.1"
+Environment="ZIMAOS_EASYTIER_WEB_DISABLE_REGISTRATION=true"
+Environment="ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL=http://127.0.0.1:37815/.well-known/jwks.json"
 EnvironmentFile=-/etc/casaos/zimaos-easytier-web.conf
 ExecStart=/usr/bin/zimaos-easytier-web --db ${ZIMAOS_EASYTIER_WEB_DB} --config_server_port ${ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PORT} --config_server_protocol ${ZIMAOS_EASYTIER_WEB_CONFIG_SERVER_PROTOCOL} --api_server_port ${ZIMAOS_EASYTIER_WEB_API_SERVER_PORT} --api_server_addr ${ZIMAOS_EASYTIER_WEB_API_SERVER_ADDR} --disable_registration ${ZIMAOS_EASYTIER_WEB_DISABLE_REGISTRATION}
 Restart=always
