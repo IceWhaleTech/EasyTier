@@ -30,7 +30,7 @@ defaults:
 
 jobs:
   build-link:
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, Linux, X64, easytier]
     steps:
       - uses: actions/checkout@v4
 
@@ -95,7 +95,7 @@ jobs:
   publish-release:
     needs: build-link
     if: startsWith(github.ref, 'refs/tags/zimaos-link-v')
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, Linux, X64, easytier]
     permissions:
       contents: write
     steps:
