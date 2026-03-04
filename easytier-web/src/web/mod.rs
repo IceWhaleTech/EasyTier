@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::header,
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing, Router,
 };
 use axum_embed::ServeEmbed;
@@ -55,10 +55,6 @@ pub fn build_router(api_host: Option<url::Url>) -> Router {
         .route("/api_meta.js", routing::get(handle_api_meta))
         // Serve dashboard from gateway prefix.
         .route("/mt/api_meta.js", routing::get(handle_api_meta))
-        .route(
-            "/mt",
-            routing::get(|| async { Redirect::temporary("/mt/") }),
-        )
         .nest_service("/mt", prefixed_service)
         .fallback_service(root_service)
         .with_state(api_host)
