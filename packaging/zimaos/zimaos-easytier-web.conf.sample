@@ -9,3 +9,12 @@ ZIMAOS_EASYTIER_WEB_API_SERVER_ADDR=127.0.0.1
 ZIMAOS_EASYTIER_WEB_DISABLE_REGISTRATION=true
 # Required for meshtier token auth when requests are not using web login session.
 ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL=http://127.0.0.1:37815/.well-known/jwks.json
+
+# Auto-register route to zimaos-gateway management API when easytier-web starts.
+# Set false to disable startup route registration.
+ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_ROUTE=true
+# Route path registered in gateway, must start with "/" and cannot be "/".
+ZIMAOS_EASYTIER_WEB_GATEWAY_ROUTE=/mt
+# Optional override for gateway management URL file path.
+# If empty, easytier-web tries /run/casaos/management.url then /var/run/casaos/management.url.
+ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE=/run/casaos/management.url

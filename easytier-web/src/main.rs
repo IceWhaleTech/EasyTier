@@ -4,7 +4,9 @@
 extern crate rust_i18n;
 
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use easytier::tunnel::websocket::WSTunnelListener;
@@ -20,6 +22,8 @@ use easytier::{
 };
 
 use mimalloc::MiMalloc;
+use reqwest::Client;
+use serde::Serialize;
 
 mod client_manager;
 mod db;
@@ -33,6 +37,21 @@ mod web;
 static GLOBAL_MIMALLOC: MiMalloc = MiMalloc;
 
 rust_i18n::i18n!("locales", fallback = "en");
+
+const GATEWAY_AUTO_REGISTER_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_ROUTE";
+const GATEWAY_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_ROUTE";
+const GATEWAY_MANAGEMENT_URL_FILE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE";
+
+const DEFAULT_GATEWAY_ROUTE: &str = "/mt";
+const DEFAULT_GATEWAY_MANAGEMENT_URL_FILE: &str = "/run/casaos/management.url";
+const FALLBACK_GATEWAY_MANAGEMENT_URL_FILE: &str = "/var/run/casaos/management.url";
+const GATEWAY_REGISTER_MAX_RETRIES: usize = 10;
+
+#[derive(Serialize)]
+struct GatewayRoutePayload<'a> {
+    path: &'a str,
+    target: &'a str,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "easytier-web", author, version = EASYTIER_VERSION , about, long_about = None)]
@@ -163,6 +182,160 @@ pub fn get_listener_by_url(l: &url::Url) -> Result<Box<dyn TunnelListener>, Erro
     })
 }
 
+fn parse_env_bool(name: &str, default: bool) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
+fn normalize_gateway_route_path(path: &str) -> Option<String> {
+    let mut route = path.trim().to_string();
+    if route.is_empty() {
+        return None;
+    }
+    if !route.starts_with('/') {
+        route = format!("/{route}");
+    }
+    if route.len() > 1 {
+        route = route.trim_end_matches('/').to_string();
+    }
+    if route == "/" {
+        return None;
+    }
+    Some(route)
+}
+
+async fn resolve_gateway_management_url() -> Option<String> {
+    let mut candidates: Vec<PathBuf> = vec![];
+    if let Ok(custom_file) = std::env::var(GATEWAY_MANAGEMENT_URL_FILE_ENV) {
+        if !custom_file.trim().is_empty() {
+            candidates.push(PathBuf::from(custom_file.trim()));
+        }
+    }
+    if candidates.is_empty() {
+        candidates.push(PathBuf::from(DEFAULT_GATEWAY_MANAGEMENT_URL_FILE));
+        candidates.push(PathBuf::from(FALLBACK_GATEWAY_MANAGEMENT_URL_FILE));
+    }
+
+    for candidate in candidates {
+        let Ok(content) = tokio::fs::read_to_string(&candidate).await else {
+            continue;
+        };
+        let url = content.trim().trim_end_matches('/').to_string();
+        if !url.is_empty() {
+            return Some(url);
+        }
+    }
+
+    None
+}
+
+fn build_gateway_target(api_server_addr: IpAddr, api_server_port: u16) -> String {
+    let host = match api_server_addr {
+        IpAddr::V4(v4) => {
+            if v4.is_unspecified() {
+                "127.0.0.1".to_string()
+            } else {
+                v4.to_string()
+            }
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_unspecified() {
+                "::1".to_string()
+            } else {
+                v6.to_string()
+            }
+        }
+    };
+
+    if host.contains(':') {
+        format!("http://[{host}]:{api_server_port}")
+    } else {
+        format!("http://{host}:{api_server_port}")
+    }
+}
+
+async fn register_route_to_gateway_if_needed(api_server_addr: IpAddr, api_server_port: u16) {
+    if !parse_env_bool(GATEWAY_AUTO_REGISTER_ROUTE_ENV, true) {
+        tracing::info!(
+            "{}=false, skip gateway route registration",
+            GATEWAY_AUTO_REGISTER_ROUTE_ENV
+        );
+        return;
+    }
+
+    let route = std::env::var(GATEWAY_ROUTE_ENV).unwrap_or_else(|_| DEFAULT_GATEWAY_ROUTE.into());
+    let Some(route) = normalize_gateway_route_path(&route) else {
+        tracing::warn!("invalid gateway route path, skip registration");
+        return;
+    };
+
+    let Some(management_url) = resolve_gateway_management_url().await else {
+        tracing::warn!("management url file not found, skip gateway route registration");
+        return;
+    };
+
+    let endpoint = format!("{management_url}/v1/gateway/routes");
+    let target = build_gateway_target(api_server_addr, api_server_port);
+    let payload = GatewayRoutePayload {
+        path: &route,
+        target: &target,
+    };
+
+    let client = match Client::builder().timeout(Duration::from_secs(2)).build() {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::warn!("failed to build http client for gateway route registration: {err}");
+            return;
+        }
+    };
+
+    for attempt in 1..=GATEWAY_REGISTER_MAX_RETRIES {
+        match client.post(&endpoint).json(&payload).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    "registered gateway route successfully, path: {}, target: {}, attempt: {}",
+                    route,
+                    target,
+                    attempt
+                );
+                return;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    "register gateway route failed, attempt: {}, status: {}, body: {}",
+                    attempt,
+                    status,
+                    body
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "register gateway route failed, attempt: {}, err: {}",
+                    attempt,
+                    err
+                );
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    tracing::warn!(
+        "failed to register gateway route after {} retries, path: {}, target: {}",
+        GATEWAY_REGISTER_MAX_RETRIES,
+        route,
+        target
+    );
+}
+
 async fn get_dual_stack_listener(
     protocol: &str,
     port: u16,
@@ -245,6 +418,8 @@ async fn main() {
     .start()
     .await
     .unwrap();
+
+    register_route_to_gateway_if_needed(cli.api_server_addr, cli.api_server_port).await;
 
     #[cfg(feature = "embed")]
     let _web_server_task = if let Some(web_router) = web_router_static {
