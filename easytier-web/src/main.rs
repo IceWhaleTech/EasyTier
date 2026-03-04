@@ -40,9 +40,12 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 const GATEWAY_AUTO_REGISTER_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_ROUTE";
 const GATEWAY_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_ROUTE";
+const GATEWAY_AUTO_REGISTER_API_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_API_ROUTE";
+const GATEWAY_API_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_API_ROUTE";
 const GATEWAY_MANAGEMENT_URL_FILE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE";
 
 const DEFAULT_GATEWAY_ROUTE: &str = "/mt";
+const DEFAULT_GATEWAY_API_ROUTE: &str = "/api/v1";
 const DEFAULT_GATEWAY_MANAGEMENT_URL_FILE: &str = "/run/casaos/management.url";
 const FALLBACK_GATEWAY_MANAGEMENT_URL_FILE: &str = "/var/run/casaos/management.url";
 const GATEWAY_REGISTER_MAX_RETRIES: usize = 10;
@@ -260,6 +263,57 @@ fn build_gateway_target(api_server_addr: IpAddr, api_server_port: u16) -> String
     }
 }
 
+async fn register_single_gateway_route(
+    client: &Client,
+    endpoint: &str,
+    path: &str,
+    target: &str,
+) -> bool {
+    let payload = GatewayRoutePayload { path, target };
+    for attempt in 1..=GATEWAY_REGISTER_MAX_RETRIES {
+        match client.post(endpoint).json(&payload).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    "registered gateway route successfully, path: {}, target: {}, attempt: {}",
+                    path,
+                    target,
+                    attempt
+                );
+                return true;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    "register gateway route failed, path: {}, attempt: {}, status: {}, body: {}",
+                    path,
+                    attempt,
+                    status,
+                    body
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "register gateway route failed, path: {}, attempt: {}, err: {}",
+                    path,
+                    attempt,
+                    err
+                );
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    tracing::warn!(
+        "failed to register gateway route after {} retries, path: {}, target: {}",
+        GATEWAY_REGISTER_MAX_RETRIES,
+        path,
+        target
+    );
+    false
+}
+
 async fn register_route_to_gateway_if_needed(api_server_addr: IpAddr, api_server_port: u16) {
     if !parse_env_bool(GATEWAY_AUTO_REGISTER_ROUTE_ENV, true) {
         tracing::info!(
@@ -282,10 +336,6 @@ async fn register_route_to_gateway_if_needed(api_server_addr: IpAddr, api_server
 
     let endpoint = format!("{management_url}/v1/gateway/routes");
     let target = build_gateway_target(api_server_addr, api_server_port);
-    let payload = GatewayRoutePayload {
-        path: &route,
-        target: &target,
-    };
 
     let client = match Client::builder().timeout(Duration::from_secs(2)).build() {
         Ok(c) => c,
@@ -295,45 +345,30 @@ async fn register_route_to_gateway_if_needed(api_server_addr: IpAddr, api_server
         }
     };
 
-    for attempt in 1..=GATEWAY_REGISTER_MAX_RETRIES {
-        match client.post(&endpoint).json(&payload).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!(
-                    "registered gateway route successfully, path: {}, target: {}, attempt: {}",
-                    route,
-                    target,
-                    attempt
-                );
-                return;
+    let mut routes = vec![route];
+    if parse_env_bool(GATEWAY_AUTO_REGISTER_API_ROUTE_ENV, true) {
+        let api_route = std::env::var(GATEWAY_API_ROUTE_ENV)
+            .unwrap_or_else(|_| DEFAULT_GATEWAY_API_ROUTE.into());
+        if let Some(api_route) = normalize_gateway_route_path(&api_route) {
+            if !routes.iter().any(|r| r == &api_route) {
+                routes.push(api_route);
             }
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                tracing::warn!(
-                    "register gateway route failed, attempt: {}, status: {}, body: {}",
-                    attempt,
-                    status,
-                    body
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "register gateway route failed, attempt: {}, err: {}",
-                    attempt,
-                    err
-                );
-            }
+        } else {
+            tracing::warn!(
+                "invalid gateway api route path from {}, skip api route registration",
+                GATEWAY_API_ROUTE_ENV
+            );
         }
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    } else {
+        tracing::info!(
+            "{}=false, skip gateway api route registration",
+            GATEWAY_AUTO_REGISTER_API_ROUTE_ENV
+        );
     }
 
-    tracing::warn!(
-        "failed to register gateway route after {} retries, path: {}, target: {}",
-        GATEWAY_REGISTER_MAX_RETRIES,
-        route,
-        target
-    );
+    for path in routes {
+        register_single_gateway_route(&client, &endpoint, &path, &target).await;
+    }
 }
 
 async fn get_dual_stack_listener(

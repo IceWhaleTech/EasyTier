@@ -15,6 +15,10 @@ ZIMAOS_EASYTIER_WEB_AUTH_JWKS_URL=http://127.0.0.1:37815/.well-known/jwks.json
 ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_ROUTE=true
 # Route path registered in gateway, must start with "/" and cannot be "/".
 ZIMAOS_EASYTIER_WEB_GATEWAY_ROUTE=/mt
+# Also auto-register API route for frontend calls.
+ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_API_ROUTE=true
+# API route path registered in gateway for easytier-web auth/rest API.
+ZIMAOS_EASYTIER_WEB_GATEWAY_API_ROUTE=/api/v1
 # Optional override for gateway management URL file path.
 # If empty, easytier-web tries /run/casaos/management.url then /var/run/casaos/management.url.
 ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE=/run/casaos/management.url
