@@ -5,7 +5,7 @@ After=network-online.target network.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/zimaos-easytier-core -c /etc/casaos/zimaos-easytier-core.conf -w udp://127.0.0.1:22020/admin
+ExecStart=/usr/bin/zimaos-easytier-core -w udp://127.0.0.1:22020/admin
 Restart=always
 RestartSec=1s
 
