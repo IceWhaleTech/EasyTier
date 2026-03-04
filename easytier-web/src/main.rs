@@ -7,6 +7,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use clap::Parser;
 use easytier::tunnel::websocket::WSTunnelListener;
@@ -43,11 +44,13 @@ const GATEWAY_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_ROUTE";
 const GATEWAY_AUTO_REGISTER_API_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_API_ROUTE";
 const GATEWAY_API_ROUTE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_API_ROUTE";
 const GATEWAY_MANAGEMENT_URL_FILE_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE";
+const GATEWAY_REGISTER_WAIT_SECS_ENV: &str = "ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_WAIT_SECS";
 
 const DEFAULT_GATEWAY_ROUTE: &str = "/mt";
 const DEFAULT_GATEWAY_API_ROUTE: &str = "/api/v1";
 const DEFAULT_GATEWAY_MANAGEMENT_URL_FILE: &str = "/run/casaos/management.url";
 const FALLBACK_GATEWAY_MANAGEMENT_URL_FILE: &str = "/var/run/casaos/management.url";
+const DEFAULT_GATEWAY_REGISTER_WAIT_SECS: u64 = 300;
 const GATEWAY_REGISTER_MAX_RETRIES: usize = 10;
 
 #[derive(Serialize)]
@@ -196,6 +199,13 @@ fn parse_env_bool(name: &str, default: bool) -> bool {
     }
 }
 
+fn parse_env_u64(name: &str, default: u64) -> u64 {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    raw.trim().parse::<u64>().unwrap_or(default)
+}
+
 fn normalize_gateway_route_path(path: &str) -> Option<String> {
     let mut route = path.trim().to_string();
     if route.is_empty() {
@@ -236,6 +246,29 @@ async fn resolve_gateway_management_url() -> Option<String> {
     }
 
     None
+}
+
+async fn wait_for_gateway_management_url() -> Option<String> {
+    let wait_secs = parse_env_u64(
+        GATEWAY_REGISTER_WAIT_SECS_ENV,
+        DEFAULT_GATEWAY_REGISTER_WAIT_SECS,
+    );
+    if wait_secs == 0 {
+        return resolve_gateway_management_url().await;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(wait_secs);
+    loop {
+        if let Some(url) = resolve_gateway_management_url().await {
+            return Some(url);
+        }
+
+        if Instant::now() >= deadline {
+            return None;
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 fn build_gateway_target(api_server_addr: IpAddr, api_server_port: u16) -> String {
@@ -329,8 +362,14 @@ async fn register_route_to_gateway_if_needed(api_server_addr: IpAddr, api_server
         return;
     };
 
-    let Some(management_url) = resolve_gateway_management_url().await else {
-        tracing::warn!("management url file not found, skip gateway route registration");
+    let Some(management_url) = wait_for_gateway_management_url().await else {
+        tracing::warn!(
+            "management url file not found after waiting {}s, skip gateway route registration",
+            parse_env_u64(
+                GATEWAY_REGISTER_WAIT_SECS_ENV,
+                DEFAULT_GATEWAY_REGISTER_WAIT_SECS
+            )
+        );
         return;
     };
 

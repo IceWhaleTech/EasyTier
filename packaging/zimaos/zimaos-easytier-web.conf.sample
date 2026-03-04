@@ -22,3 +22,6 @@ ZIMAOS_EASYTIER_WEB_GATEWAY_API_ROUTE=/api/v1
 # Optional override for gateway management URL file path.
 # If empty, easytier-web tries /run/casaos/management.url then /var/run/casaos/management.url.
 ZIMAOS_EASYTIER_WEB_GATEWAY_MANAGEMENT_URL_FILE=/run/casaos/management.url
+# Startup wait time (seconds) for gateway management url file.
+# Increase this when gateway starts slower than easytier-web.
+ZIMAOS_EASYTIER_WEB_GATEWAY_REGISTER_WAIT_SECS=300
