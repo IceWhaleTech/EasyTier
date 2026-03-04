@@ -2427,6 +2427,7 @@ dependencies = [
  "clap",
  "dashmap",
  "easytier",
+ "gethostname 0.5.0",
  "image 0.24.9",
  "imageproc",
  "jsonwebtoken",

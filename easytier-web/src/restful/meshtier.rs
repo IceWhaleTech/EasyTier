@@ -424,10 +424,19 @@ fn default_mesh_network_config(
 }
 
 fn default_hostname() -> String {
+    let system_hostname = gethostname::gethostname()
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    if !system_hostname.is_empty() {
+        return system_hostname;
+    }
+
     std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .ok()
-        .filter(|v| !v.trim().is_empty())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
         .unwrap_or_else(|| DEFAULT_HOSTNAME.to_string())
 }
 
