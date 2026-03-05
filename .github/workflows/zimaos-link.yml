@@ -71,8 +71,32 @@ jobs:
             echo "protoc not found, will install it"
           fi
 
+      - name: Resolve protoc include path
+        id: protoc-include
+        if: steps.protoc-ready.outputs.need_setup == '0'
+        run: |
+          set -euo pipefail
+          protoc_path="$(command -v protoc)"
+          protoc_root="$(cd "$(dirname "${protoc_path}")/.." && pwd)"
+
+          for include_dir in "${PROTOC_INCLUDE:-}" \
+                             "${protoc_root}/include" \
+                             /usr/include \
+                             /usr/local/include \
+                             /github/home/.protoc/include; do
+            [[ -n "${include_dir}" ]] || continue
+            if [[ -f "${include_dir}/google/protobuf/timestamp.proto" ]]; then
+              echo "PROTOC_INCLUDE=${include_dir}" >> "$GITHUB_ENV"
+              echo "found=1" >> "$GITHUB_OUTPUT"
+              echo "Using PROTOC_INCLUDE=${include_dir}"
+              exit 0
+            fi
+          done
+          echo "found=0" >> "$GITHUB_OUTPUT"
+          echo "No protobuf include matched for existing protoc; will fallback to setup-protoc."
+
       - name: Setup protoc
-        if: steps.protoc-ready.outputs.need_setup == '1'
+        if: steps.protoc-ready.outputs.need_setup == '1' || steps.protoc-include.outputs.found == '0'
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
