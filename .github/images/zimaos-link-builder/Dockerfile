@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     build-essential \
     pkg-config \
+    protobuf-compiler \
     clang \
     llvm \
     libclang-dev \

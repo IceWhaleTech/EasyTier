@@ -31,8 +31,15 @@ fi
 
 # see https://github.com/rust-lang/rustup/issues/3709
 rustup set auto-self-update disable
-rustup install 1.93
-rustup default 1.93
+RUST_VERSION=${RUST_VERSION:-1.93}
+RUST_VERSION_REGEX="^${RUST_VERSION//./\\.}(\\.|$)"
+ACTIVE_RUSTC_VERSION="$(rustc --version | awk '{print $2}')"
+if [[ "$ACTIVE_RUSTC_VERSION" =~ $RUST_VERSION_REGEX ]]; then
+    echo "rustc $ACTIVE_RUSTC_VERSION already matches required $RUST_VERSION, skip rustup install/default"
+else
+    rustup install "$RUST_VERSION"
+    rustup default "$RUST_VERSION"
+fi
 
 # mips/mipsel cannot add target from rustup, need compile by ourselves
 if [[ $OS =~ ^ubuntu.*$ && $TARGET =~ ^mips.*$ ]]; then
@@ -50,12 +57,20 @@ if [[ $OS =~ ^ubuntu.*$ && $TARGET =~ ^mips.*$ ]]; then
     # https://github.com/rust-lang/rust/issues/128808
     # remove it after Cargo or rustc fix this.
     RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
-    if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
+    if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then
         cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
     fi
 else
-    rustup target add $TARGET
+    if rustup target list --installed | grep -qx "$TARGET"; then
+        echo "target $TARGET already installed, skip rustup target add"
+    else
+        rustup target add $TARGET
+    fi
     if [[ $GUI_TARGET != '' ]]; then
-        rustup target add $GUI_TARGET
+        if rustup target list --installed | grep -qx "$GUI_TARGET"; then
+            echo "target $GUI_TARGET already installed, skip rustup target add"
+        else
+            rustup target add $GUI_TARGET
+        fi
     fi
 fi

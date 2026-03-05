@@ -1,11 +1,15 @@
-name: 'Setup pnpm'
+name: "Setup pnpm"
 author: Luna
-description: 'Setup Node.js, pnpm, and install dependencies'
+description: "Setup Node.js, pnpm, and install dependencies"
 
 inputs:
   build_filter:
-    description: 'The filter argument for pnpm build (e.g. ./easytier-web/*)'
+    description: "The filter argument for pnpm build (e.g. ./easytier-web/*)"
     required: true
+  save_cache:
+    description: "Whether to save pnpm cache after build"
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -26,8 +30,9 @@ runs:
       run: |
         echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
-    - name: Setup pnpm cache
-      uses: actions/cache@v4
+    - name: Restore pnpm cache
+      id: pnpm-cache-restore
+      uses: actions/cache/restore@v4
       with:
         path: ${{ env.STORE_PATH }}
         key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -40,3 +45,10 @@ runs:
         pnpm -r install
         echo "Building with filter: ${{ inputs.build_filter }}"
         pnpm -r --filter "${{ inputs.build_filter }}" build
+
+    - name: Save pnpm cache
+      if: ${{ inputs.save_cache == 'true' && steps.pnpm-cache-restore.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: ${{ steps.pnpm-cache-restore.outputs.cache-primary-key }}

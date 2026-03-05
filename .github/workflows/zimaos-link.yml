@@ -50,26 +50,59 @@ jobs:
           rustup --version
           cargo --version
           rustc --version
-          clang --version | head -n 1
-          cc --version | head -n 1
-          unzip -v | head -n 1
+          clang --version | sed -n '1p'
+          cc --version | sed -n '1p'
+          unzip -v | sed -n '1p'
 
       - name: Build frontend assets for embed
         uses: ./.github/actions/prepare-pnpm
         with:
           build_filter: "./easytier-web/*"
+          save_cache: "false"
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ""
-          shared-key: "zimaos-link"
+      - name: Check protoc availability
+        id: protoc-ready
+        run: |
+          if command -v protoc >/dev/null 2>&1; then
+            echo "need_setup=0" >> "$GITHUB_OUTPUT"
+            echo "protoc already available: $(protoc --version)"
+          else
+            echo "need_setup=1" >> "$GITHUB_OUTPUT"
+            echo "protoc not found, will install it"
+          fi
 
       - name: Setup protoc
+        if: steps.protoc-ready.outputs.need_setup == '1'
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check Rust toolchain and target
+        id: rust-ready
+        env:
+          TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
+        run: |
+          set -euo pipefail
+
+          need_install=0
+          rustc_version="$(rustc --version | awk '{print $2}')"
+          if [[ ! "$rustc_version" =~ ^1\.93\. ]]; then
+            need_install=1
+            echo "rustc version $rustc_version does not match expected 1.93.x"
+          fi
+
+          if ! rustup target list --installed | grep -qx "$TARGET"; then
+            need_install=1
+            echo "target $TARGET missing from rustup installed targets"
+          fi
+
+          echo "need_install=${need_install}" >> "$GITHUB_OUTPUT"
+          if [[ "$need_install" == "0" ]]; then
+            echo "Rust toolchain and target already ready, skip install step"
+          fi
+
       - name: Install Rust target
+        if: steps.rust-ready.outputs.need_install == '1'
         env:
           TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           GUI_TARGET: ""
@@ -105,11 +138,13 @@ jobs:
           )
 
       - name: Upload link artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: zimaos-link-${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           path: |
             build/sysroot/**
+          compression-level: 0
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
@@ -118,6 +153,7 @@ jobs:
           path: |
             dist/zimaos-link-*.tar.gz
             dist/zimaos-link-*.tar.gz.sha256
+          compression-level: 0
 
   publish-release:
     needs: build-link
