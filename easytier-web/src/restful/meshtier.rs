@@ -215,7 +215,18 @@ async fn do_connect(
         .await
         .map_err(convert_remote_error)?;
 
-    wait_easytier_online(client_mgr, runtime.identity, instance_id).await
+    // Keep startup checks for EasyTier instance, but return ZT-compatible payload for API callers.
+    wait_easytier_online(client_mgr, runtime.identity, instance_id).await?;
+
+    match runtime.zerotier.get_info().await {
+        Ok(info) => Ok(info),
+        Err(err) => {
+            tracing::warn!(
+                "zerotier get_info after connect failed, fallback to wait_ip_info response: {err}"
+            );
+            Ok(zt_info)
+        }
+    }
 }
 
 async fn do_disconnect(
@@ -225,7 +236,7 @@ async fn do_disconnect(
     headers: &HeaderMap,
 ) -> Result<MeshResponse, HttpHandleError> {
     let runtime = MeshRuntime::from_request(client_mgr, auth_session, headers, query).await?;
-    runtime
+    let zt_response = runtime
         .zerotier
         .disconnect()
         .await
@@ -233,12 +244,7 @@ async fn do_disconnect(
 
     clear_meshtier_networks(client_mgr, runtime.identity).await?;
 
-    Ok(MeshResponse {
-        id: String::new(),
-        name: "easytier".to_string(),
-        status: MeshStatus::Offline,
-        ip: None,
-    })
+    Ok(zt_response)
 }
 
 async fn do_reset(
