@@ -30,9 +30,29 @@ defaults:
 
 jobs:
   build-link:
+    permissions:
+      contents: read
+      packages: read
     runs-on: [self-hosted, Linux, X64, easytier]
+    container:
+      image: ghcr.io/icewhaletech/easytier-zimaos-link-builder:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1000:1000
+    env:
+      PATH: /usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
       - uses: actions/checkout@v4
+
+      - name: Show build image toolchain
+        run: |
+          rustup --version
+          cargo --version
+          rustc --version
+          clang --version | head -n 1
+          cc --version | head -n 1
+          unzip -v | head -n 1
 
       - name: Build frontend assets for embed
         uses: ./.github/actions/prepare-pnpm
@@ -44,33 +64,16 @@ jobs:
           prefix-key: ""
           shared-key: "zimaos-link"
 
-      - name: Ensure unzip is available
-        run: |
-          if ! command -v unzip >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y unzip
-          fi
-
       - name: Setup protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Ensure rustup is available
-        run: |
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" --version
-          "$HOME/.cargo/bin/rustc" --version
-          "$HOME/.cargo/bin/cargo" --version
-
       - name: Install Rust target
         env:
           TARGET: ${{ github.event.inputs.target_triple || 'x86_64-unknown-linux-gnu' }}
           GUI_TARGET: ""
-          OS: ubuntu-22.04
+          OS: linux
         run: |
           bash ./.github/workflows/install_rust.sh
 
