@@ -118,11 +118,6 @@ pub fn router() -> Router<AppStateInner> {
         .route("/mt/status", put(api_mesh_status))
         .route("/mt/connect", post(api_mesh_connect))
         .route("/mt/disconnect", post(api_mesh_disconnect))
-        .route("/api/v1/mesh/ping", get(api_ping))
-        .route("/api/v1/mesh/info", get(api_mesh_info))
-        .route("/api/v1/mesh/status", put(api_mesh_status))
-        .route("/api/v1/mesh/connect", post(api_mesh_connect))
-        .route("/api/v1/mesh/disconnect", post(api_mesh_disconnect))
 }
 
 async fn api_ping(
