@@ -1,6 +1,7 @@
 {
   "name": "@icewhale/easytier-openapi",
   "version": "0.0.1",
+  "private": true,
   "description": "EasyTier TypeScript SDK generator from OpenAPI specs",
   "scripts": {
     "clean": "rm -rf generate dist",
