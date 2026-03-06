@@ -1,0 +1,16 @@
+name: publish npm
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+
+jobs:
+  call-workflow-passing-data:
+    permissions:
+      contents: write
+      id-token: write
+    uses: IceWhaleTech/github/.github/workflows/npm_release.yml@main
+    secrets:
+      API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
