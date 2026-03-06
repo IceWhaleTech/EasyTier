@@ -1,0 +1,227 @@
+openapi: 3.0.3
+
+info:
+  title: ZimaOS EasyTier Mesh API
+  version: v2
+  license:
+    name: LGPL-3.0-or-later
+    url: https://www.gnu.org/licenses/lgpl-3.0.html
+  description: |
+    <picture>
+         <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_dark_night_800px.png">
+         <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
+         <img alt="CasaOS" src="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
+     </picture>
+     This is the mesh API exposed by `easytier-web`.
+     It provides ZeroTier-compatible status/info semantics and EasyTier-backed runtime behavior.
+
+servers:
+  - url: /mt
+    description: Gateway mesh API (preferred)
+  - url: /api/v1/mesh
+    description: Legacy mesh API alias
+
+tags:
+  - name: mesh
+    description: Mesh lifecycle and status operations
+
+x-tagGroups:
+  - name: Methods
+    tags:
+      - mesh
+  - name: Schemas
+    tags:
+      - MeshStatusRequest
+      - MeshResponse
+
+security:
+  - bearer_token: []
+  - token_query: []
+
+paths:
+  /ping:
+    get:
+      summary: Ping mesh API
+      description: Health check endpoint for mesh API reachability.
+      operationId: pingMeshApi
+      tags:
+        - mesh
+      parameters:
+        - $ref: "#/components/parameters/gateway_user_id"
+      responses:
+        "200":
+          description: API is reachable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: pong
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /info:
+    get:
+      summary: Get mesh info
+      description: Fetch current mesh status in ZeroTier-compatible response shape.
+      operationId: getMeshInfo
+      tags:
+        - mesh
+      parameters:
+        - $ref: "#/components/parameters/gateway_user_id"
+      responses:
+        "200":
+          $ref: "#/components/responses/ResponseMeshOK"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /status:
+    put:
+      summary: Update mesh status
+      description: Set mesh status to `online`, `offline`, or `reset`.
+      operationId: setMeshStatus
+      tags:
+        - mesh
+      parameters:
+        - $ref: "#/components/parameters/gateway_user_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeshStatusRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/ResponseMeshOK"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /connect:
+    post:
+      summary: Connect mesh
+      description: Bring mesh online and return ZeroTier-compatible status payload.
+      operationId: connectMesh
+      tags:
+        - mesh
+      parameters:
+        - $ref: "#/components/parameters/gateway_user_id"
+      responses:
+        "200":
+          $ref: "#/components/responses/ResponseMeshOK"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /disconnect:
+    post:
+      summary: Disconnect mesh
+      description: Bring mesh offline and clear EasyTier meshtier runtime instances.
+      operationId: disconnectMesh
+      tags:
+        - mesh
+      parameters:
+        - $ref: "#/components/parameters/gateway_user_id"
+      responses:
+        "200":
+          $ref: "#/components/responses/ResponseMeshOK"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+components:
+  securitySchemes:
+    bearer_token:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    token_query:
+      type: apiKey
+      in: query
+      name: token
+
+  parameters:
+    gateway_user_id:
+      name: user_id
+      in: header
+      required: false
+      description: Optional gateway forwarded user id. If present, must match JWT claim `id`.
+      schema:
+        type: integer
+        format: int32
+        example: 1
+
+  schemas:
+    MeshStatus:
+      type: string
+      description: Mesh connectivity status.
+      enum:
+        - online
+        - offline
+        - reset
+
+    MeshStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: "#/components/schemas/MeshStatus"
+
+    MeshResponse:
+      type: object
+      required:
+        - id
+        - name
+        - status
+      properties:
+        id:
+          type: string
+          description: ZeroTier id in string form when online, empty when offline in some flows.
+          example: 1c978a12d05588af
+        name:
+          type: string
+          description: Mesh network name.
+          example: IceWhale-RemoteAccess
+        status:
+          $ref: "#/components/schemas/MeshStatus"
+        ip:
+          type: string
+          nullable: true
+          description: Assigned virtual ip if connected.
+          example: 10.243.0.1
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: missing Authorization header and token query parameter
+
+  responses:
+    ResponseMeshOK:
+      description: Mesh operation success
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MeshResponse"
+    ResponseUnauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResponseInternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

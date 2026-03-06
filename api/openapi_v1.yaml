@@ -1,0 +1,991 @@
+openapi: 3.0.3
+
+info:
+  title: ZimaOS EasyTier Web API
+  version: v1
+  license:
+    name: LGPL-3.0-or-later
+    url: https://www.gnu.org/licenses/lgpl-3.0.html
+  description: |
+    <picture>
+         <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_dark_night_800px.png">
+         <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
+         <img alt="CasaOS" src="https://raw.githubusercontent.com/IceWhaleTech/logo/main/casaos/casaos_banner_twilight_blue_800px.png">
+     </picture>
+     This is the API for `easytier-web` (v1 namespace).
+     It covers auth/session, network instance operations and utility endpoints.
+
+servers:
+  - url: /api/v1
+    description: EasyTier Web v1 API
+
+tags:
+  - name: auth
+    description: Login and account operations
+  - name: session
+    description: Session and runtime summary operations
+  - name: network
+    description: EasyTier network management operations
+  - name: utility
+    description: Config conversion and helper operations
+
+x-tagGroups:
+  - name: Methods
+    tags:
+      - auth
+      - session
+      - network
+      - utility
+  - name: Schemas
+    tags:
+      - Credentials
+      - NetworkConfig
+      - MeshResponse
+
+security:
+  - session_cookie: []
+
+paths:
+  /auth/check_login_status:
+    get:
+      summary: Check login status
+      operationId: checkLoginStatus
+      tags:
+        - auth
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+
+  /auth/login:
+    post:
+      summary: Login
+      operationId: login
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /auth/logout:
+    get:
+      summary: Logout
+      operationId: logout
+      tags:
+        - auth
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /auth/captcha:
+    get:
+      summary: Get captcha image
+      operationId: getCaptcha
+      tags:
+        - auth
+      security: []
+      responses:
+        "200":
+          description: Captcha image bytes
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /auth/register:
+    post:
+      summary: Register user
+      operationId: register
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterNewUser"
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "403":
+          $ref: "#/components/responses/ResponseForbidden"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /auth/password:
+    put:
+      summary: Change password
+      operationId: changePassword
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePassword"
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /summary:
+    get:
+      summary: Get summary
+      operationId: getSummary
+      tags:
+        - session
+      responses:
+        "200":
+          description: Summary of current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummaryResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+
+  /sessions:
+    get:
+      summary: List all easytier-core sessions
+      operationId: listSessions
+      tags:
+        - session
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSessionsResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+
+  /generate-config:
+    post:
+      summary: Generate TOML config from structured config
+      operationId: generateConfig
+      tags:
+        - utility
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateConfigRequest"
+      responses:
+        "200":
+          description: Config generation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /parse-config:
+    post:
+      summary: Parse TOML config into structured config
+      operationId: parseConfig
+      tags:
+        - utility
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ParseConfigRequest"
+      responses:
+        "200":
+          description: Config parse result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParseConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /machines:
+    get:
+      summary: List user machines
+      operationId: listMachines
+      tags:
+        - network
+      responses:
+        "200":
+          description: User machine list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListMachineResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+
+  /machines/{machine_id}/validate-config:
+    post:
+      summary: Validate network config for machine
+      operationId: validateNetworkConfig
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateConfigRequest"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /machines/{machine_id}/networks:
+    get:
+      summary: List running network instance ids
+      operationId: listNetworkInstanceIds
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      responses:
+        "200":
+          description: Instance id list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListNetworkInstanceIdsResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+    post:
+      summary: Run network instance
+      operationId: runNetworkInstance
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunNetworkRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OKResponse"
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /machines/{machine_id}/networks/{inst_id}:
+    delete:
+      summary: Remove network instance
+      operationId: removeNetworkInstance
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+        - $ref: "#/components/parameters/inst_id"
+      responses:
+        "200":
+          description: Removed successfully
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+    put:
+      summary: Update network state
+      operationId: updateNetworkState
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+        - $ref: "#/components/parameters/inst_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNetworkStateRequest"
+      responses:
+        "200":
+          description: Updated successfully
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "501":
+          description: Not implemented for disable-all mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /machines/{machine_id}/networks/info:
+    get:
+      summary: Collect all network runtime info
+      operationId: collectNetworkInfo
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      responses:
+        "200":
+          description: Runtime info map
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectNetworkInfoResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+    post:
+      summary: Collect runtime info by instance ids
+      operationId: collectNetworkInfoByIds
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectNetworkInfoRequest"
+      responses:
+        "200":
+          description: Runtime info map
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectNetworkInfoResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+
+  /machines/{machine_id}/networks/info/{inst_id}:
+    get:
+      summary: Collect one network runtime info
+      operationId: collectOneNetworkInfo
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+        - $ref: "#/components/parameters/inst_id"
+      responses:
+        "200":
+          description: Runtime info map (contains requested id)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectNetworkInfoResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+
+  /machines/{machine_id}/networks/config/{inst_id}:
+    get:
+      summary: Get network config
+      operationId: getNetworkConfig
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+        - $ref: "#/components/parameters/inst_id"
+      responses:
+        "200":
+          description: Network config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkConfig"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+    put:
+      summary: Save network config
+      operationId: saveNetworkConfig
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+        - $ref: "#/components/parameters/inst_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveNetworkRequest"
+      responses:
+        "200":
+          description: Saved successfully
+        "400":
+          $ref: "#/components/responses/BadResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+  /machines/{machine_id}/networks/metas:
+    post:
+      summary: Get network metas
+      operationId: getNetworkMetas
+      tags:
+        - network
+      parameters:
+        - $ref: "#/components/parameters/machine_id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetNetworkMetasRequest"
+      responses:
+        "200":
+          description: Network meta list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetNetworkMetasResponse"
+        "401":
+          $ref: "#/components/responses/ResponseUnauthorized"
+        "404":
+          $ref: "#/components/responses/ResponseNotFound"
+        "500":
+          $ref: "#/components/responses/ResponseInternalServerError"
+
+components:
+  securitySchemes:
+    session_cookie:
+      type: apiKey
+      in: cookie
+      name: id
+
+  parameters:
+    machine_id:
+      name: machine_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 4bd8f5dc-5df7-4f09-a987-c621110f5d4a
+    inst_id:
+      name: inst_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 6d657368-7469-6572-1c97-8a12d05588af
+
+  schemas:
+    Void:
+      type: object
+      additionalProperties: false
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: Invalid credentials
+
+    Credentials:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          example: 21232f297a57a5a743894a0e4a801fc3
+
+    RegisterNewUser:
+      type: object
+      required:
+        - credentials
+        - captcha
+      properties:
+        credentials:
+          $ref: "#/components/schemas/Credentials"
+        captcha:
+          type: string
+          example: a1b2
+
+    ChangePassword:
+      type: object
+      required:
+        - new_password
+      properties:
+        new_password:
+          type: string
+          example: new-password
+
+    StorageToken:
+      type: object
+      required:
+        - token
+        - client_url
+        - machine_id
+        - user_id
+      properties:
+        token:
+          type: string
+          example: admin
+        client_url:
+          type: string
+          format: uri
+          example: udp://10.0.0.83:22022/admin
+        machine_id:
+          type: string
+          format: uuid
+        user_id:
+          type: integer
+          format: int32
+          example: 1
+
+    ListSessionsResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/StorageToken"
+
+    SummaryResponse:
+      type: object
+      required:
+        - device_count
+      properties:
+        device_count:
+          type: integer
+          format: int32
+          example: 1
+
+    GenerateConfigRequest:
+      type: object
+      required:
+        - config
+      properties:
+        config:
+          $ref: "#/components/schemas/NetworkConfig"
+
+    GenerateConfigResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          nullable: true
+        toml_config:
+          type: string
+          nullable: true
+
+    ParseConfigRequest:
+      type: object
+      required:
+        - toml_config
+      properties:
+        toml_config:
+          type: string
+          example: |
+            instance_id = "6d657368-7469-6572-1c97-8a12d05588af"
+
+    ParseConfigResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          nullable: true
+        config:
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/NetworkConfig"
+          nullable: true
+
+    NetworkConfig:
+      type: object
+      description: |
+        EasyTier network config. This schema keeps frequently used fields explicit while allowing
+        additional fields for forward compatibility.
+      additionalProperties: true
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+        dhcp:
+          type: boolean
+        virtual_ipv4:
+          type: string
+          example: 10.126.126.1
+        network_length:
+          type: integer
+          format: int32
+          example: 16
+        hostname:
+          type: string
+          example: ZimaCube
+        network_name:
+          type: string
+          example: IceWhale-RemoteAccess
+        network_secret:
+          type: string
+        networking_method:
+          type: integer
+          description: "0=PublicServer, 1=Manual, 2=Standalone"
+          enum: [0, 1, 2]
+        public_server_url:
+          type: string
+        peer_urls:
+          type: array
+          items:
+            type: string
+        proxy_cidrs:
+          type: array
+          items:
+            type: string
+        listener_urls:
+          type: array
+          items:
+            type: string
+        latency_first:
+          type: boolean
+        bind_device:
+          type: boolean
+        multi_thread:
+          type: boolean
+        disable_encryption:
+          type: boolean
+        enable_magic_dns:
+          type: boolean
+        enable_private_mode:
+          type: boolean
+        routes:
+          type: array
+          items:
+            type: string
+        exit_nodes:
+          type: array
+          items:
+            type: string
+        port_forwards:
+          type: array
+          items:
+            $ref: "#/components/schemas/PortForwardConfig"
+
+    PortForwardConfig:
+      type: object
+      properties:
+        bind_ip:
+          type: string
+        bind_port:
+          type: integer
+          format: int32
+        dst_ip:
+          type: string
+        dst_port:
+          type: integer
+          format: int32
+        proto:
+          type: string
+          example: tcp
+
+    ValidateConfigRequest:
+      type: object
+      required:
+        - config
+      properties:
+        config:
+          $ref: "#/components/schemas/NetworkConfig"
+
+    ValidateConfigResponse:
+      type: object
+      properties:
+        toml_config:
+          type: string
+          example: "[network]\nnetwork_name = \"demo\""
+
+    RunNetworkRequest:
+      type: object
+      required:
+        - config
+        - save
+      properties:
+        config:
+          $ref: "#/components/schemas/NetworkConfig"
+        save:
+          type: boolean
+          default: true
+
+    SaveNetworkRequest:
+      type: object
+      required:
+        - config
+      properties:
+        config:
+          $ref: "#/components/schemas/NetworkConfig"
+
+    UpdateNetworkStateRequest:
+      type: object
+      required:
+        - disabled
+      properties:
+        disabled:
+          type: boolean
+
+    CollectNetworkInfoRequest:
+      type: object
+      properties:
+        inst_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    NetworkInstanceRunningInfo:
+      type: object
+      additionalProperties: true
+      properties:
+        dev_name:
+          type: string
+        my_node_info:
+          type: object
+          additionalProperties: true
+        events:
+          type: array
+          items:
+            type: string
+        routes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        peers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        peer_route_pairs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        running:
+          type: boolean
+        error_msg:
+          type: string
+          nullable: true
+
+    CollectNetworkInfoResponse:
+      type: object
+      properties:
+        info:
+          type: object
+          nullable: true
+          properties:
+            map:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/NetworkInstanceRunningInfo"
+
+    ListNetworkInstanceIdsResponse:
+      type: object
+      properties:
+        inst_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    GetNetworkMetasRequest:
+      type: object
+      required:
+        - instance_ids
+      properties:
+        instance_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    NetworkMeta:
+      type: object
+      properties:
+        inst_id:
+          type: string
+          format: uuid
+        network_name:
+          type: string
+        config_permission:
+          type: integer
+          format: int32
+
+    GetNetworkMetasResponse:
+      type: object
+      properties:
+        metas:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkMeta"
+
+    HeartbeatRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        machine_id:
+          type: string
+          format: uuid
+          nullable: true
+        inst_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_token:
+          type: string
+        easytier_version:
+          type: string
+        report_time:
+          type: string
+        hostname:
+          type: string
+        running_network_instances:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    Location:
+      type: object
+      required:
+        - country
+      properties:
+        country:
+          type: string
+          example: CN
+        city:
+          type: string
+          nullable: true
+        region:
+          type: string
+          nullable: true
+
+    ListMachineItem:
+      type: object
+      properties:
+        client_url:
+          type: string
+          format: uri
+          nullable: true
+        info:
+          $ref: "#/components/schemas/HeartbeatRequest"
+        location:
+          $ref: "#/components/schemas/Location"
+
+    ListMachineResponse:
+      type: object
+      properties:
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListMachineItem"
+
+  responses:
+    OKResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Void"
+    BadResponse:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResponseUnauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResponseForbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResponseNotFound:
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResponseInternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

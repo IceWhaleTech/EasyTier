@@ -1,6 +1,32 @@
 {
-  "name": "easytier-monorepo",
+  "name": "@icewhale/easytier-openapi",
+  "version": "0.0.1",
   "private": true,
+  "description": "EasyTier TypeScript SDK generator from OpenAPI specs",
+  "scripts": {
+    "clean": "rm -rf generate dist",
+    "generate:local": "openapi-generator-cli generate -g typescript-axios -i ./api/openapi.yaml -o ./generate",
+    "generate:local_v1": "openapi-generator-cli generate -g typescript-axios -i ./api/openapi_v1.yaml -o ./generate/v1",
+    "generate:npx": "npx @openapitools/openapi-generator-cli generate -g typescript-axios -i ./api/openapi.yaml -o ./generate",
+    "generate:ts": "npx openapi-typescript-codegen --input ./api/openapi.yaml --output ./generate",
+    "start": "npm run generate:local && npm run generate:local_v1"
+  },
+  "homepage": "https://github.com/IceWhaleTech/EasyTier#readme",
+  "keywords": [
+    "EasyTier",
+    "ZimaOS",
+    "OpenAPI",
+    "SDK"
+  ],
+  "dependencies": {
+    "axios": "^1.10.0"
+  },
+  "devDependencies": {
+    "@openapitools/openapi-generator-cli": "2.5.2",
+    "openapi-typescript-codegen": "^0.29.0"
+  },
+  "author": "casaos",
+  "license": "Apache-2.0",
   "pnpm": {
     "overrides": {
       "minimatch": "10.2.4"
