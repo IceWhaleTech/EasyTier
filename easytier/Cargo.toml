@@ -137,6 +137,7 @@ rand = "0.8.5"
 serde = { version = "1.0", features = ["derive"] }
 pnet = { version = "0.35.0", features = ["serde"] }
 serde_json = "1"
+dirs = "6.0.0"
 
 clap = { version = "4.5.30", features = [
     "string",

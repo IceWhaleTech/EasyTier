@@ -2169,6 +2169,7 @@ dependencies = [
  "derivative",
  "derive_builder",
  "derive_more 2.1.1",
+ "dirs 6.0.0",
  "easytier-rpc-build",
  "encoding",
  "flume 0.12.0",

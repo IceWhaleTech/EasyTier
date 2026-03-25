@@ -24,6 +24,7 @@ use crate::common::global_ctx::{ArcGlobalCtx, GlobalCtx, GlobalCtxEvent};
 use crate::common::scoped_task::ScopedTask;
 use crate::common::PeerId;
 use crate::connector::direct::DirectConnectorManager;
+use crate::connector::discovery::manager::PeerDiscoveryManager;
 use crate::connector::manual::{ConnectorManagerRpcService, ManualConnectorManager};
 use crate::connector::tcp_hole_punch::TcpHolePunchConnector;
 use crate::connector::udp_hole_punch::UdpHolePunchConnector;
@@ -551,6 +552,7 @@ pub struct Instance {
     socks5_server: Arc<Socks5Server>,
 
     proxy_cidrs_monitor: Option<ScopedTask<()>>,
+    discovery_manager: Option<PeerDiscoveryManager>,
 
     global_ctx: ArcGlobalCtx,
 }
@@ -635,6 +637,7 @@ impl Instance {
             socks5_server,
 
             proxy_cidrs_monitor: None,
+            discovery_manager: None,
 
             global_ctx,
         }
@@ -644,12 +647,12 @@ impl Instance {
         self.conn_manager.clone()
     }
 
-    async fn add_initial_peers(&self) -> Result<(), Error> {
-        for peer in self.global_ctx.config.get_peers().iter() {
-            self.get_conn_manager()
-                .add_connector_by_url(peer.uri.clone())
-                .await?;
-        }
+    async fn start_peer_discovery(&mut self) -> Result<(), Error> {
+        self.discovery_manager = Some(
+            PeerDiscoveryManager::new(self.global_ctx.clone(), self.get_conn_manager())
+                .await
+                .with_context(|| "initialize peer discovery failed")?,
+        );
         Ok(())
     }
 
@@ -1006,7 +1009,7 @@ impl Instance {
             .set_route_cost_fn(route_calc)
             .await;
 
-        self.add_initial_peers().await?;
+        self.start_peer_discovery().await?;
 
         let monitor = super::proxy_cidrs_monitor::ProxyCidrsMonitor::new(
             self.peer_manager.clone(),
@@ -1491,6 +1494,7 @@ impl Instance {
     }
 
     pub async fn clear_resources(&mut self) {
+        self.discovery_manager.take();
         self.peer_manager.clear_resources().await;
         #[cfg(feature = "tun")]
         let _ = self.nic_ctx.lock().await.take();
