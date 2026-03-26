@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use crate::common::{config::PeerConfig, error::Error, global_ctx::ArcGlobalCtx, idn};
 
 mod builtin;
+mod cache;
 mod file;
 mod http;
 pub mod manager;
@@ -19,6 +20,19 @@ pub(crate) const MAX_DISCOVERY_DEPTH: usize = 8;
 pub enum PeerRef {
     Target(PeerTarget),
     List(PeerListRef),
+}
+
+impl PeerRef {
+    pub fn peer(&self) -> &PeerConfig {
+        match self {
+            Self::Target(target) => target.peer(),
+            Self::List(list) => list.peer(),
+        }
+    }
+
+    pub fn key(&self) -> String {
+        self.peer().uri.to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +53,7 @@ impl PeerTarget {
 #[derive(Debug, Clone)]
 pub struct PeerListRef {
     inner: Arc<dyn PeerList>,
+    policy: PeerListPolicy,
 }
 
 impl PeerListRef {
@@ -46,12 +61,20 @@ impl PeerListRef {
         Self::new(BuiltinPeerList::default_root())
     }
 
-    fn new<T>(list: T) -> Self
+    pub(crate) fn new<T>(list: T) -> Self
+    where
+        T: PeerList + 'static,
+    {
+        Self::with_policy(list, PeerListPolicy::default())
+    }
+
+    pub(crate) fn with_policy<T>(list: T, policy: PeerListPolicy) -> Self
     where
         T: PeerList + 'static,
     {
         Self {
             inner: Arc::new(list),
+            policy,
         }
     }
 
@@ -61,6 +84,10 @@ impl PeerListRef {
 
     pub fn refresh_interval(&self) -> Option<Duration> {
         self.inner.refresh_interval()
+    }
+
+    pub fn cache_policy(&self) -> PeerListCachePolicy {
+        self.policy.cache
     }
 
     pub fn source_key(&self) -> String {
@@ -83,8 +110,20 @@ impl PeerListRef {
 
 impl PartialEq for PeerListRef {
     fn eq(&self, other: &Self) -> bool {
-        self.peer() == other.peer()
+        self.peer() == other.peer() && self.policy == other.policy
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PeerListPolicy {
+    pub cache: PeerListCachePolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PeerListCachePolicy {
+    #[default]
+    Disabled,
+    DynamicFile,
 }
 
 impl TryFrom<PeerConfig> for PeerRef {
@@ -96,23 +135,28 @@ impl TryFrom<PeerConfig> for PeerRef {
             peer_public_key: peer.peer_public_key,
         };
 
-        if let Some(list) = try_build_peer_list(normalized.clone())? {
-            Ok(Self::List(list))
+        if let Some(peer_ref) = try_build_peer_ref(normalized.clone())? {
+            Ok(peer_ref)
         } else {
             Ok(Self::Target(PeerTarget { peer: normalized }))
         }
     }
 }
 
-fn try_build_peer_list(peer: PeerConfig) -> Result<Option<PeerListRef>, Error> {
+fn try_build_peer_ref(peer: PeerConfig) -> Result<Option<PeerRef>, Error> {
     if let Some(list) = BuiltinPeerList::try_from_peer(peer.clone()) {
-        return Ok(Some(PeerListRef::new(list)));
+        return Ok(Some(PeerRef::List(PeerListRef::new(list))));
     }
     if let Some(list) = FilePeerList::try_from_peer(peer.clone())? {
-        return Ok(Some(PeerListRef::new(list)));
+        return Ok(Some(PeerRef::List(PeerListRef::new(list))));
     }
     if let Some(list) = HttpPeerList::try_from_peer(peer)? {
-        return Ok(Some(PeerListRef::new(list)));
+        return Ok(Some(PeerRef::List(PeerListRef::with_policy(
+            list,
+            PeerListPolicy {
+                cache: PeerListCachePolicy::DynamicFile,
+            },
+        ))));
     }
     Ok(None)
 }
@@ -146,12 +190,13 @@ mod tests {
             r#"
             tcp://127.0.0.1:11010
             peerlist+file:///tmp/peers.txt
+            peerlist+http://127.0.0.1/peers.txt
             # comment
             not-a-url
             "#,
         );
 
-        assert_eq!(refs.len(), 2);
+        assert_eq!(refs.len(), 3);
         match &refs[0] {
             PeerRef::Target(target) => {
                 assert_eq!(target.peer().uri.as_str(), "tcp://127.0.0.1:11010")
@@ -163,6 +208,16 @@ mod tests {
                 assert_eq!(list.peer().uri.as_str(), "peerlist+file:///tmp/peers.txt")
             }
             _ => panic!("expected nested peer list"),
+        }
+        match &refs[2] {
+            PeerRef::List(list) => {
+                assert_eq!(
+                    list.peer().uri.as_str(),
+                    "peerlist+http://127.0.0.1/peers.txt"
+                );
+                assert_eq!(list.cache_policy(), PeerListCachePolicy::DynamicFile);
+            }
+            _ => panic!("expected peer list"),
         }
     }
 }

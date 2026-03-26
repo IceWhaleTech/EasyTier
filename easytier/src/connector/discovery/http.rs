@@ -23,10 +23,12 @@ impl HttpPeerList {
     pub(crate) fn try_from_peer(peer: PeerConfig) -> Result<Option<Self>, Error> {
         match peer.uri.scheme() {
             "peerlist+http" | "peerlist+https" => {
-                let scheme = peer.uri.scheme().to_owned();
-                let mut target = peer.uri.clone();
-                target
-                    .set_scheme(scheme.trim_start_matches("peerlist+"))
+                let target = peer
+                    .uri
+                    .as_str()
+                    .replacen("peerlist+http://", "http://", 1)
+                    .replacen("peerlist+https://", "https://", 1)
+                    .parse::<url::Url>()
                     .map_err(|_| {
                         Error::InvalidUrl(format!("invalid peer list http url: {}", peer.uri))
                     })?;
