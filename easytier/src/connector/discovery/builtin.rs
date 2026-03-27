@@ -5,6 +5,9 @@ use crate::common::{config::PeerConfig, error::Error, global_ctx::ArcGlobalCtx};
 use super::{parse_peer_refs, peer_list::PeerList, PeerRef};
 
 const BUILTIN_LIST_URI: &str = "builtin://default";
+const PUBLISHED_BUILTIN_PEERLIST_URL: &str =
+    "peerlist+https://raw.githubusercontent.com/IceWhaleTech/EasyTier/provider/peerlists/builtin-peers.txt";
+
 const BUILTIN_PEER_REFS: &[&str] = &[
     "tcp://remote-eu-central-1a.icewhale.io:11010",
     "wss://remote-eu-central-1a.icewhale.io:11012",
@@ -16,6 +19,10 @@ const BUILTIN_PEER_REFS: &[&str] = &[
     "udp://remote-us-east-2a.icewhale.io:11010",
     "udp://remote-ap-northeast-1a.icewhale.io:11010",
     "wss://et.icewhale.io/",
+    "tcp://remote-ap-southeast-1a.icewhale.io:11010",
+    "udp://remote-ap-southeast-1a.icewhale.io:11010",
+    "wss://remote-ap-southeast-1a.icewhale.io:11012",
+    PUBLISHED_BUILTIN_PEERLIST_URL,
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,5 +55,35 @@ impl PeerList for BuiltinPeerList {
 
     async fn resolve(&self, _ctx: &ArcGlobalCtx) -> Result<Vec<PeerRef>, Error> {
         Ok(parse_peer_refs(&BUILTIN_PEER_REFS.join("\n")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BUILTIN_PEER_REFS, PUBLISHED_BUILTIN_PEERLIST_URL};
+
+    const PUBLISHED_BUILTIN_PEERS: &str =
+        include_str!("../../../../peerlists/builtin-peers.txt");
+
+    #[test]
+    fn published_builtin_peers_match_embedded_targets() {
+        let published = PUBLISHED_BUILTIN_PEERS
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>();
+
+        let embedded_targets = BUILTIN_PEER_REFS
+            .iter()
+            .copied()
+            .filter(|peer| !peer.starts_with("peerlist+"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(published, embedded_targets);
+    }
+
+    #[test]
+    fn embedded_list_contains_published_github_peerlist() {
+        assert!(BUILTIN_PEER_REFS.contains(&PUBLISHED_BUILTIN_PEERLIST_URL));
     }
 }
