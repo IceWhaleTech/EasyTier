@@ -13,14 +13,14 @@ use super::{parse_peer_refs, PeerListRef, PeerRef};
 #[derive(Clone)]
 pub(crate) struct PeerListCacheStore {
     root_dir: PathBuf,
-    write_lock: Arc<Mutex<()>>,
+    save_lock: Arc<Mutex<()>>,
 }
 
 impl PeerListCacheStore {
     pub(crate) fn new(root_dir: Option<PathBuf>) -> Self {
         Self {
             root_dir: root_dir.unwrap_or_else(default_store_root),
-            write_lock: Arc::new(Mutex::new(())),
+            save_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -54,7 +54,7 @@ impl PeerListCacheStore {
             return Ok(());
         }
 
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.save_lock.lock().await;
         let path = self.scope_file_path(global_ctx, list);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
