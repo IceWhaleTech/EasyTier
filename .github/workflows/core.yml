@@ -2,7 +2,7 @@ name: EasyTier Core
 
 on:
   push:
-    branches: ["develop", "main", "releases/**"]
+    branches: ["develop", "main", "releases/**", "dev", "icewhale/**"]
   pull_request:
     branches: ["develop", "main"]
 
@@ -21,16 +21,27 @@ jobs:
     # Map a step output to a job output
     outputs:
       # do not skip push on branch starts with releases/
-      should_skip: ${{ steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') }}
+      should_skip: ${{ (steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') && github.ref_name != 'dev') || steps.branch_guard.outputs.should_skip == 'true' }}
     steps:
       - id: skip_check
         uses: fkirc/skip-duplicate-actions@v5
         with:
           # All of these options are optional, so you can remove them if you are happy with the defaults
-          concurrent_skipping: 'same_content_newer'
-          skip_after_successful_duplicate: 'true'
-          cancel_others: 'true'
-          paths: '["Cargo.toml", "Cargo.lock", "easytier/**", ".github/workflows/core.yml", ".github/workflows/install_rust.sh", "easytier-web/**"]'
+          concurrent_skipping: "same_content_newer"
+          skip_after_successful_duplicate: "true"
+          cancel_others: "true"
+          paths: '["Cargo.toml", "Cargo.lock", "easytier/**", ".github/workflows/core.yml", ".github/workflows/install_rust.sh", ".github/scripts/should-skip-heavy-build.sh", "easytier-web/**"]'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        with:
+          fetch-depth: 0
+      - id: branch_guard
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: bash ./.github/scripts/should-skip-heavy-build.sh
   build_web:
     runs-on: ubuntu-latest
     needs: pre_job
@@ -308,7 +319,7 @@ jobs:
         run: exit 1
 
   magisk_build:
-    needs: 
+    needs:
       - pre_job
       - build_web
       - build
@@ -316,14 +327,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4  # 必须先检出代码才能获取模块配置
+        uses: actions/checkout@v4 # 必须先检出代码才能获取模块配置
 
       # 下载二进制文件到独立目录
       - name: Download Linux aarch64 binaries
         uses: actions/download-artifact@v4
         with:
           name: easytier-linux-aarch64
-          path: ./downloaded-binaries/  # 独立目录避免冲突
+          path: ./downloaded-binaries/ # 独立目录避免冲突
 
       # 将二进制文件复制到 Magisk 模块目录
       - name: Prepare binaries
@@ -332,7 +343,6 @@ jobs:
           cp ./downloaded-binaries/easytier-core ./easytier-contrib/easytier-magisk/
           cp ./downloaded-binaries/easytier-cli ./easytier-contrib/easytier-magisk/
           cp ./downloaded-binaries/easytier-web ./easytier-contrib/easytier-magisk/
-
 
       # 上传生成的模块
       - name: Upload Magisk Module

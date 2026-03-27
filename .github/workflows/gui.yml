@@ -2,10 +2,10 @@ name: EasyTier GUI
 
 on:
   push:
-    branches: ["develop", "main", "releases/**"]
+    branches: ["develop", "main", "releases/**", "dev", "icewhale/**"]
   pull_request:
     branches: ["develop", "main"]
-      
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -20,16 +20,27 @@ jobs:
     runs-on: ubuntu-latest
     # Map a step output to a job output
     outputs:
-      should_skip: ${{ steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') }}
+      should_skip: ${{ (steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') && github.ref_name != 'dev') || steps.branch_guard.outputs.should_skip == 'true' }}
     steps:
       - id: skip_check
         uses: fkirc/skip-duplicate-actions@v5
         with:
           # All of these options are optional, so you can remove them if you are happy with the defaults
-          concurrent_skipping: 'same_content_newer'
-          skip_after_successful_duplicate: 'true'
-          cancel_others: 'true'
-          paths: '["Cargo.toml", "Cargo.lock", "easytier/**", "easytier-gui/**", ".github/workflows/gui.yml", ".github/workflows/install_rust.sh", ".github/workflows/install_gui_dep.sh", "easytier-web/frontend-lib/**"]'
+          concurrent_skipping: "same_content_newer"
+          skip_after_successful_duplicate: "true"
+          cancel_others: "true"
+          paths: '["Cargo.toml", "Cargo.lock", "easytier/**", "easytier-gui/**", ".github/workflows/gui.yml", ".github/workflows/install_rust.sh", ".github/workflows/install_gui_dep.sh", ".github/scripts/should-skip-heavy-build.sh", "easytier-web/frontend-lib/**"]'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        with:
+          fetch-depth: 0
+      - id: branch_guard
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: bash ./.github/scripts/should-skip-heavy-build.sh
   build-gui:
     strategy:
       fail-fast: false
@@ -76,7 +87,7 @@ jobs:
       GUI_TARGET: ${{ matrix.GUI_TARGET }}
       OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
     needs: pre_job
-    if: needs.pre_job.outputs.should_skip != 'true'    
+    if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v3
 
@@ -188,7 +199,7 @@ jobs:
       - name: Compress
         run: |
           mkdir -p ./artifacts/objects/
-          
+
           if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
             TAG=$GITHUB_REF_NAME
           else

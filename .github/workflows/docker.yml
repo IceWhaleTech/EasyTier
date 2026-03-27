@@ -4,100 +4,258 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'The run id of EasyTier-Core Action in EasyTier repo'
+        description: "The run id of EasyTier Core in this repository"
         type: number
-        default: 10228239965
         required: true
       image_tag:
-        description: 'Tag for this image build'
+        description: "Tag for this image build"
         type: string
-        default: 'v2.5.0'
+        default: "v2.5.0"
         required: true
       mark_latest:
-        description: 'Mark this image as latest'
+        description: "Mark this image as latest"
         type: boolean
         default: false
         required: true
       mark_unstable:
-        description: 'Mark this image as unstable'
+        description: "Mark this image as unstable"
         type: boolean
         default: false
         required: true
+  workflow_run:
+    workflows: ["EasyTier Core"]
+    types: [completed]
+  push:
+    branches: ["icewhale/dev"]
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.event.workflow_run.head_sha || inputs.run_id || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   docker:
-    if: contains('["KKRainbow"]', github.actor)
-    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' && contains('["KKRainbow"]', github.actor)) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'dev') ||
+      (github.event_name == 'push' &&
+       github.ref_name == 'icewhale/dev')
+    runs-on: [self-hosted, Linux, X64, easytier]
+    env:
+      DOCKERHUB_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/easytier
+      GHCR_REPO_OWNER: ${{ github.repository_owner }}
+      DOCKERHUB_ENABLED: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' && 'true' || 'false' }}
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v4
-      -
-        name: Validate inputs
+
+      - name: Resolve core artifacts source
+        id: core_source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=${{ inputs.run_id }}" >> "$GITHUB_OUTPUT"
+            echo "image_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "image_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch_name="${GITHUB_REF_NAME}"
+          image_sha="${GITHUB_SHA}"
+          current_core_run_id=""
+          source_sha=""
+
+          for attempt in $(seq 1 40); do
+            api_path="/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&branch=${branch_name}&head_sha=${image_sha}&per_page=100"
+            current_core_run_id="$(gh api "$api_path" --jq '.workflow_runs | map(select(.name == "EasyTier Core")) | sort_by(.created_at) | last | .id // empty')"
+            core_status="$(gh api "$api_path" --jq '.workflow_runs | map(select(.name == "EasyTier Core")) | sort_by(.created_at) | last | .status // empty')"
+            core_conclusion="$(gh api "$api_path" --jq '.workflow_runs | map(select(.name == "EasyTier Core")) | sort_by(.created_at) | last | .conclusion // empty')"
+
+            if [[ -n "$current_core_run_id" && "$core_status" == "completed" ]]; then
+              if [[ "$core_conclusion" != "success" ]]; then
+                echo "EasyTier Core run ${current_core_run_id} finished with ${core_conclusion}" >&2
+                exit 1
+              fi
+              break
+            fi
+
+            sleep 15
+          done
+
+          if [[ -z "$current_core_run_id" ]]; then
+            echo "Timed out waiting for EasyTier Core run for ${branch_name}@${image_sha}" >&2
+            exit 1
+          fi
+
+          has_required_artifacts() {
+            local run_id="$1"
+            local artifact_names
+            artifact_names="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" --jq '.artifacts[]?.name')"
+            for artifact_name in \
+              easytier-linux-x86_64 \
+              easytier-linux-armhf \
+              easytier-linux-armv7hf \
+              easytier-linux-riscv64
+            do
+              if ! grep -Fxq "$artifact_name" <<< "$artifact_names"; then
+                return 1
+              fi
+            done
+            return 0
+          }
+
+          selected_run_id=""
+          source_sha=""
+
+          if has_required_artifacts "$current_core_run_id"; then
+            selected_run_id="$current_core_run_id"
+            source_sha="$image_sha"
+          else
+            echo "Current core run ${current_core_run_id} has no complete docker artifacts, searching fallback runs"
+            for candidate_branch in "$branch_name" dev develop main; do
+              while IFS=$'\t' read -r candidate_run_id candidate_sha; do
+                [[ -n "$candidate_run_id" ]] || continue
+                [[ "$candidate_run_id" == "$current_core_run_id" ]] && continue
+                if has_required_artifacts "$candidate_run_id"; then
+                  selected_run_id="$candidate_run_id"
+                  source_sha="$candidate_sha"
+                  echo "Using fallback core run ${candidate_run_id} from branch ${candidate_branch} at ${candidate_sha}"
+                  break 2
+                fi
+              done < <(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&branch=${candidate_branch}&per_page=100" --jq '.workflow_runs | map(select(.name == "EasyTier Core" and .status == "completed" and .conclusion == "success")) | sort_by(.created_at) | reverse | .[] | "\(.id)\t\(.head_sha)"')
+            done
+          fi
+
+          if [[ -z "$selected_run_id" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=no reusable core artifact set found for ${branch_name} or fallback branches" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "run_id=${selected_run_id}" >> "$GITHUB_OUTPUT"
+          echo "image_sha=${image_sha}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+          echo "branch_name=${branch_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate manual inputs
+        if: github.event_name == 'workflow_dispatch'
         run: |
           if [[ "${{ inputs.mark_latest }}" == "true" && "${{ inputs.mark_unstable }}" == "true" ]]; then
             echo "Error: mark_latest and mark_unstable cannot both be true"
             exit 1
           fi
-      -
-        name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      -
-        name: Set up Docker Buildx
+
+      - name: Prepare local Docker binfmt
+        if: steps.core_source.outputs.ready == 'true'
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt --install arm,riscv64
+
+      - name: Verify local Docker host
+        if: steps.core_source.outputs.ready == 'true'
+        run: docker info
+
+      - name: Set up Docker Buildx
+        if: steps.core_source.outputs.ready == 'true'
         uses: docker/setup-buildx-action@v3
-      -
-        name: Login to Docker Hub
+
+      - name: Login to Docker Hub
+        if: steps.core_source.outputs.ready == 'true' && env.DOCKERHUB_ENABLED == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: login github container registry
+
+      - name: Login GitHub Container Registry
+        if: steps.core_source.outputs.ready == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download artifact
-        id: download-artifact
+
+      - name: Download core artifacts
+        if: steps.core_source.outputs.ready == 'true'
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.run_id }}
-          repo: EasyTier/EasyTier
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.core_source.outputs.run_id }}
+          repo: ${{ github.repository }}
           path: docker_context
-      - name: List files
-        run: |
-          ls -l -R .
+
+      - name: Skip when core artifacts are unavailable
+        if: steps.core_source.outputs.ready != 'true'
+        run: echo "${{ steps.core_source.outputs.skip_reason }}"
+
       - name: Prepare Docker tags
         id: tags
+        if: steps.core_source.outputs.ready == 'true'
         run: |
-          # Base tags with version
-          DOCKERHUB_TAGS="easytier/easytier:${{ inputs.image_tag }}"
-          GHCR_TAGS="ghcr.io/easytier/easytier:${{ inputs.image_tag }}"
+          GHCR_REPO="ghcr.io/${GHCR_REPO_OWNER,,}/easytier"
+          if [[ "${{ github.event_name }}" == "workflow_run" || "${{ github.event_name }}" == "push" ]]; then
+            SHORT_SHA="${{ steps.core_source.outputs.source_sha }}"
+            SHORT_SHA="${SHORT_SHA::7}"
+            BRANCH_TAG="${{ steps.core_source.outputs.branch_name }}"
+            BRANCH_TAG="${BRANCH_TAG//\//-}"
+            BRANCH_TAG="${BRANCH_TAG,,}"
+            GHCR_TAGS="${GHCR_REPO}:${BRANCH_TAG},${GHCR_REPO}:${BRANCH_TAG}-${SHORT_SHA}"
+          else
+            GHCR_TAGS="${GHCR_REPO}:${{ inputs.image_tag }}"
 
-          # Add latest tags if requested
-          if [[ "${{ inputs.mark_latest }}" == "true" ]]; then
-            DOCKERHUB_TAGS="${DOCKERHUB_TAGS},easytier/easytier:latest"
-            GHCR_TAGS="${GHCR_TAGS},ghcr.io/easytier/easytier:latest"
+            if [[ "${{ inputs.mark_latest }}" == "true" ]]; then
+              GHCR_TAGS="${GHCR_TAGS},${GHCR_REPO}:latest"
+            fi
+
+            if [[ "${{ inputs.mark_unstable }}" == "true" ]]; then
+              GHCR_TAGS="${GHCR_TAGS},${GHCR_REPO}:unstable"
+            fi
           fi
 
-          # Add unstable tags if requested
-          if [[ "${{ inputs.mark_unstable }}" == "true" ]]; then
-            DOCKERHUB_TAGS="${DOCKERHUB_TAGS},easytier/easytier:unstable"
-            GHCR_TAGS="${GHCR_TAGS},ghcr.io/easytier/easytier:unstable"
+          if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
+            if [[ "${{ github.event_name }}" == "workflow_run" || "${{ github.event_name }}" == "push" ]]; then
+              DOCKERHUB_TAGS="${DOCKERHUB_REPO}:${BRANCH_TAG},${DOCKERHUB_REPO}:${BRANCH_TAG}-${SHORT_SHA}"
+            else
+              DOCKERHUB_TAGS="${DOCKERHUB_REPO}:${{ inputs.image_tag }}"
+              if [[ "${{ inputs.mark_latest }}" == "true" ]]; then
+                DOCKERHUB_TAGS="${DOCKERHUB_TAGS},${DOCKERHUB_REPO}:latest"
+              fi
+              if [[ "${{ inputs.mark_unstable }}" == "true" ]]; then
+                DOCKERHUB_TAGS="${DOCKERHUB_TAGS},${DOCKERHUB_REPO}:unstable"
+              fi
+            fi
+            ALL_TAGS="${DOCKERHUB_TAGS},${GHCR_TAGS}"
+          else
+            ALL_TAGS="${GHCR_TAGS}"
           fi
 
-          # Combine all tags
-          ALL_TAGS="${DOCKERHUB_TAGS},${GHCR_TAGS}"
-
-          echo "tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
+          echo "tags=${ALL_TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${ALL_TAGS}"
-      -
-        name: Build and push
+
+      - name: Build and push
+        if: steps.core_source.outputs.ready == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./docker_context
-          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/riscv64
+          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/riscv64
           push: true
           file: .github/workflows/Dockerfile
           tags: ${{ steps.tags.outputs.tags }}
