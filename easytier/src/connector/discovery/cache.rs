@@ -81,11 +81,7 @@ impl PeerListCacheStore {
 }
 
 fn default_store_root() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .or_else(|| dirs::home_dir().map(|path| path.join(".local").join("share")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("easytier")
+    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
 }
 
 fn sanitize_scope_name(name: &str) -> String {
