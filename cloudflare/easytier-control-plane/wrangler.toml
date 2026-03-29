@@ -1,0 +1,49 @@
+name = "easytier-control-plane"
+main = "src/index.ts"
+compatibility_date = "2026-03-29"
+compatibility_flags = ["nodejs_compat"]
+minify = true
+workers_dev = false
+
+[vars]
+CF_CONTAINERS_ACCOUNT_ID = "09a207f03f6818f4ab62111b20a34941"
+CF_EASYTIER_CONTAINER_APP_ID = "a030cea1-98bc-4639-b366-4eb49f16050a"
+
+[placement]
+mode = "smart"
+
+[[durable_objects.bindings]]
+name = "EASYTIER_CONTAINER"
+class_name = "EasyTierContainer"
+
+[[durable_objects.bindings]]
+name = "NETWORK_ROUTER"
+class_name = "NetworkRouter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EasyTierContainer"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["NetworkRegistry"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["NetworkRegistry"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["NetworkRouter"]
+
+[[containers]]
+class_name = "EasyTierContainer"
+image = "./Dockerfile"
+instance_type = "basic"
+
+[observability.logs]
+enabled = true
+
+[[routes]]
+pattern = "et.icewhale.io"
+custom_domain = true

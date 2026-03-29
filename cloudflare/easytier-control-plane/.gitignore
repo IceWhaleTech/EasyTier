@@ -1,0 +1,4 @@
+worker-configuration.d.ts
+.wrangler/
+.wrangler-build/
+.wrangler-build-*/
