@@ -75,7 +75,7 @@
 ## 本地开发
 
 ```bash
-cd cloudflare/easytier-control-plane
+cd easytier-contrib/easytier-cloudflare-control-plane
 pnpm install --ignore-workspace --lockfile=false
 pnpm cf-typegen
 pnpm dev
@@ -142,7 +142,7 @@ wrangler secret put CLOUDFLARE_API_TOKEN
 当前 `/api/routes/:networkName/where` 依赖外部同步的实例目录。同步方式：
 
 ```bash
-cd cloudflare/easytier-control-plane
+cd easytier-contrib/easytier-cloudflare-control-plane
 API_AUTH_TOKEN=<worker-api-token> npm run sync:instances
 ```
 
