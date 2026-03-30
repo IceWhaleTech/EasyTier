@@ -2,13 +2,14 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 
-import { buildSharedRelayConfig, formatConfigExample } from "./config";
+import {
+  buildSharedRelayConfig,
+  formatConfigExample,
+  RequestError,
+} from "./config";
 import { DEFAULT_INSTANCE, INITIAL_MESSAGE_TIMEOUT_MS } from "./constants";
 import { EasyTierContainer } from "./easytier-container";
-import {
-  extractNetworkNameFromFrame,
-  type Frame,
-} from "./easytier-proto";
+import { extractNetworkNameFromFrame, type Frame } from "./easytier-proto";
 import {
   resolveInstanceCatalogView,
   syncInstanceCatalog,
@@ -44,7 +45,11 @@ const subtle = crypto.subtle as SubtleCrypto & {
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) {
-    return c.json({ error: error.message }, error.status);
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+
+  if (error instanceof RequestError) {
+    return Response.json({ error: error.message }, { status: error.status });
   }
 
   const message = error instanceof Error ? error.message : String(error);
@@ -336,12 +341,10 @@ async function handleRoutedWebSocket(
   let resolveFirstMessage!: (data: Frame) => void;
   let rejectFirstMessage!: (reason?: unknown) => void;
 
-  const firstMessage = new Promise<Frame>(
-    (resolve, reject) => {
-      resolveFirstMessage = resolve;
-      rejectFirstMessage = reject;
-    },
-  );
+  const firstMessage = new Promise<Frame>((resolve, reject) => {
+    resolveFirstMessage = resolve;
+    rejectFirstMessage = reject;
+  });
 
   const timeout = setTimeout(() => {
     if (!firstMessageResolved) {
@@ -544,7 +547,8 @@ async function sendContainerControlRequest(
 async function readJsonResponse<T>(response: Response): Promise<T> {
   const data = (await response.json()) as T & { error?: string };
   if (!response.ok) {
-    throw new Error(
+    throw new RequestError(
+      response.status,
       typeof data === "object" && data && "error" in data && data.error
         ? String(data.error)
         : `request failed with status ${response.status}`,
