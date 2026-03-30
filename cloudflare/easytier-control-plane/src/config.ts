@@ -23,6 +23,7 @@ export function normalizeConfig(input: InstanceConfig): InstanceConfig {
 
   return {
     instanceName: input.instanceName?.trim() || DEFAULT_INSTANCE,
+    hostname: input.hostname?.trim() || undefined,
     networkName: input.networkName?.trim() || "",
     networkSecret: input.networkSecret ?? "",
     peers: (input.peers ?? []).map((item) => item.trim()).filter(Boolean),
@@ -120,6 +121,7 @@ export function parseInstanceConfig(value: unknown): InstanceConfig {
 
   return normalizeConfig({
     instanceName: stringOrUndefined("instanceName"),
+    hostname: stringOrUndefined("hostname"),
     networkName: stringOrUndefined("networkName"),
     networkSecret: stringOrUndefined("networkSecret"),
     peers: parseStringArray("peers"),

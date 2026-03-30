@@ -47,7 +47,7 @@ misc
 et.db
 et.db-shm
 et.db-wal
+/peer-list-cache/
 pnpm-lock.yaml
 pnpm-workspace.yaml
 .zed
-

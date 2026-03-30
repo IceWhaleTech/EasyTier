@@ -78,7 +78,10 @@ async function buildInstanceName(
   networkName: string,
   locationHint: DurableObjectLocationHint,
 ): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(networkName));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(networkName),
+  );
   const hex = [...new Uint8Array(digest)]
     .slice(0, 8)
     .map((item) => item.toString(16).padStart(2, "0"))

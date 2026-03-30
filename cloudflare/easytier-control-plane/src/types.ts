@@ -1,5 +1,6 @@
 export type InstanceConfig = {
   instanceName?: string;
+  hostname?: string;
   networkName?: string;
   networkSecret?: string;
   peers?: string[];
@@ -37,4 +38,8 @@ export type ContainerInstanceRecord = {
   location: string | null;
   version: number | null;
   created: string | null;
+};
+
+export type SyncedInstanceRecord = ContainerInstanceRecord & {
+  syncedAt: string;
 };

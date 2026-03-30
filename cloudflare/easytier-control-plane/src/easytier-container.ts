@@ -60,7 +60,6 @@ export class EasyTierContainer extends Container {
   private async ensureStarted(config: InstanceConfig): Promise<void> {
     const args = buildEasyTierArgs(config);
     await this.startAndWaitForPorts({
-      ports: [INTERNAL_WS_PORT],
       startOptions: {
         entrypoint: ["/usr/local/bin/easytier-core", ...args],
         envVars: {

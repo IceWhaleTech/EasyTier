@@ -56,6 +56,7 @@ impl PeerListCacheStore {
 
         let _guard = self.save_lock.lock().await;
         let path = self.scope_file_path(global_ctx, list);
+        tracing::info!(path = ?path, "saving peer refs");
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }

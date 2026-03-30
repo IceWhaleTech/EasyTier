@@ -9,6 +9,7 @@
 - 从握手里的 `network_name` 提取分流键
 - 同一个 `network_name` 永远粘到同一个 Cloudflare Container 实例
 - 首次分配时按请求来源大陆选择一个 `locationHint`
+- `/api/routes/:networkName/where` 通过外部同步的实例目录查询真实容器位置
 
 ## 现在的结构
 
@@ -22,6 +23,8 @@
 - `src/network-router.ts`
   - 每个 `network_name` 一个 Durable Object
   - 负责把网络名绑定到实例名和地区 hint
+- `src/instance-catalog.ts`
+  - 存放由外部同步任务写入的 `instanceName -> location/state/version`
 - `src/easytier-proto.ts`
   - 只解析首帧里需要的最小 protobuf 字段
 - `src/config.ts`
@@ -48,6 +51,7 @@
 - `GET /api/routes/:networkName`
 - `DELETE /api/routes/:networkName`
 - `GET /api/routes/:networkName/instance`
+- `GET /api/routes/:networkName/where`
 - `WS /connect`
 
 ## 示例配置
@@ -115,6 +119,18 @@ wrangler secret put API_AUTH_TOKEN
 
 这个版本故意去掉了 `account_id`、`routes`、多余 `vars` 等部署期配置，方便把它当成一个可移植的最小模板。如果你有固定域名或账号绑定，再按你的环境把这些配置加回 `wrangler.toml`。
 
+当前 `/api/routes/:networkName/where` 依赖外部同步的实例目录。同步方式：
+
+```bash
+cd cloudflare/easytier-control-plane
+API_AUTH_TOKEN=<worker-api-token> npm run sync:instances
+```
+
+同步脚本会调用：
+
+- `wrangler containers instances <APP_ID> --json`
+- `PUT /api/admin/instances/sync`
+
 如果你之前已经部署过带 `NetworkRegistry` 的旧版本，并且要原地升级这个 Worker，需要按 Cloudflare Durable Objects 迁移规则，额外补一条删除旧类的 migration。这个最小版没有保留那段配置，是为了保证新项目能直接跑起来。
 
 ## 重要限制
@@ -122,3 +138,4 @@ wrangler secret put API_AUTH_TOKEN
 - 路由键只使用 `network_name`
 - 不修改客户端，所以不能使用 URL path、query 或 header 传递房间信息
 - 这意味着如果两个不同网络误用了同一个 `network_name`，它们会被路由到同一个 relay 实例
+- `/where` 返回的服务端实例信息来自外部同步的实例目录，不是 EasyTier `hostname`

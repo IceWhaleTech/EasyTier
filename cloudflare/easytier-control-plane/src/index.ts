@@ -6,19 +6,17 @@ import { buildSharedRelayConfig, formatConfigExample } from "./config";
 import { DEFAULT_INSTANCE, INITIAL_MESSAGE_TIMEOUT_MS } from "./constants";
 import { EasyTierContainer } from "./easytier-container";
 import { extractNetworkNameFromFrame } from "./easytier-proto";
+import { InstanceCatalog } from "./instance-catalog";
 import { NetworkRouter } from "./network-router";
 import type {
-  ContainerInstanceRecord,
   NetworkRouteRecord,
   ResolveNetworkRouteResult,
   StoredState,
+  SyncedInstanceRecord,
 } from "./types";
 
 type WorkerEnv = Cloudflare.Env & {
   API_AUTH_TOKEN?: string;
-  CF_CONTAINERS_ACCOUNT_ID?: string;
-  CF_EASYTIER_CONTAINER_APP_ID?: string;
-  CF_CONTAINERS_API_TOKEN?: string;
 };
 
 type AppContext = {
@@ -77,6 +75,10 @@ app.get("/", landingPage);
 app.get("/index.html", landingPage);
 
 app.get("/api/config-example", (c) => c.json(formatConfigExample()));
+app.put("/api/admin/instances/sync", async (c) => {
+  const payload = await c.req.json();
+  return syncContainerInstances(c.env, payload);
+});
 app.get("/api/instance", (c) =>
   sendControlRequest(c, "/control/status", "GET"),
 );
@@ -110,6 +112,13 @@ app.get("/api/routes/:networkName/instance", async (c) => {
 app.get("/api/routes/:networkName/where", async (c) => {
   const networkName = c.req.param("networkName");
   const route = await getNetworkRoute(c.env, networkName);
+  const routeView = {
+    networkName: route.networkName,
+    instanceName: route.instanceName,
+    locationHint: route.locationHint,
+    createdAt: route.createdAt,
+    lastResolvedAt: route.lastResolvedAt,
+  };
   const [runtimeResult, instanceResult] = await Promise.allSettled([
     sendContainerControlRequest(
       c.env,
@@ -118,13 +127,13 @@ app.get("/api/routes/:networkName/where", async (c) => {
       "/control/status",
       "GET",
     ).then((response) => readJsonResponse<StoredState>(response)),
-    getContainerInstanceDetails(c.env, route.instanceName),
+    getSyncedInstance(c.env, route.instanceName),
   ]);
 
   return c.json({
     networkName,
     client: getClientRequestInfo(c.req.raw),
-    route,
+    route: routeView,
     runtime:
       runtimeResult.status === "fulfilled"
         ? runtimeResult.value
@@ -136,9 +145,12 @@ app.get("/api/routes/:networkName/where", async (c) => {
           },
     instance:
       instanceResult.status === "fulfilled"
-        ? instanceResult.value
+        ? {
+            source: "instance-catalog",
+            instance: instanceResult.value,
+          }
         : {
-            source: "cloudflare-api-error",
+            source: "instance-catalog-error",
             reason:
               instanceResult.reason instanceof Error
                 ? instanceResult.reason.message
@@ -154,7 +166,7 @@ app.all("/connect", (c) =>
     : c.json({ error: "websocket upgrade required" }, 426),
 );
 
-export { EasyTierContainer, NetworkRouter };
+export { EasyTierContainer, InstanceCatalog, NetworkRouter };
 export default app;
 
 function landingPage(c: Context<AppContext>): Response | Promise<Response> {
@@ -457,6 +469,39 @@ function forwardRouteRequest(
   );
 }
 
+function getInstanceCatalogStub(env: WorkerEnv) {
+  const id = env.INSTANCE_CATALOG.idFromName("global");
+  return env.INSTANCE_CATALOG.get(id);
+}
+
+function syncContainerInstances(
+  env: WorkerEnv,
+  payload: unknown,
+): Promise<Response> {
+  return getInstanceCatalogStub(env).fetch(
+    new Request(buildInternalUrl("/instances/sync"), {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+async function getSyncedInstance(
+  env: WorkerEnv,
+  instanceName: string,
+): Promise<SyncedInstanceRecord | null> {
+  const response = await getInstanceCatalogStub(env).fetch(
+    new Request(
+      buildInternalUrl(`/instances/${encodeURIComponent(instanceName)}`),
+      { method: "GET" },
+    ),
+  );
+  return readJsonResponse<SyncedInstanceRecord | null>(response);
+}
+
 async function configureSharedRelayContainer(
   env: WorkerEnv,
   route: NetworkRouteRecord,
@@ -555,165 +600,6 @@ function getClientRequestInfo(request: Request) {
     asn: cf?.asn ?? null,
     asOrganization: cf?.asOrganization ?? null,
   };
-}
-
-async function getContainerInstanceDetails(
-  env: WorkerEnv,
-  instanceName: string,
-): Promise<
-  | {
-      source: "cloudflare-api";
-      instance: ContainerInstanceRecord | null;
-    }
-  | {
-      source: "location-hint-only";
-      reason: string;
-      instance: null;
-    }
-> {
-  if (
-    !env.CF_CONTAINERS_API_TOKEN ||
-    !env.CF_CONTAINERS_ACCOUNT_ID ||
-    !env.CF_EASYTIER_CONTAINER_APP_ID
-  ) {
-    return {
-      source: "location-hint-only",
-      reason:
-        "set CF_CONTAINERS_API_TOKEN secret and CF_CONTAINERS_ACCOUNT_ID / CF_EASYTIER_CONTAINER_APP_ID vars to enable real instance location lookup",
-      instance: null,
-    };
-  }
-
-  const instances = await listContainerInstances(env);
-  return {
-    source: "cloudflare-api",
-    instance: instances.find((item) => item.name === instanceName) ?? null,
-  };
-}
-
-async function listContainerInstances(
-  env: WorkerEnv,
-): Promise<ContainerInstanceRecord[]> {
-  const instances: ContainerInstanceRecord[] = [];
-  let pageToken: string | undefined;
-
-  do {
-    const url = new URL(
-      `https://api.cloudflare.com/client/v4/accounts/${env.CF_CONTAINERS_ACCOUNT_ID}/cloudchamber/dash/applications/${env.CF_EASYTIER_CONTAINER_APP_ID}/instances`,
-    );
-    url.searchParams.set("per_page", "100");
-    if (pageToken) {
-      url.searchParams.set("page_token", pageToken);
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${env.CF_CONTAINERS_API_TOKEN}`,
-      },
-    });
-
-    const payload = (await response.json()) as {
-      result?: {
-        data?: {
-          instances?: Array<{
-            id?: string | null;
-            location?: string | null;
-            app_version?: number | null;
-            created_at?: string | null;
-            current_placement?: {
-              status?: {
-                container_status?: string | null;
-                health?: string | null;
-              } | null;
-            } | null;
-          }>;
-          durable_objects?: Array<{
-            id?: string | null;
-            name?: string | null;
-            deployment_id?: string | null;
-            assigned_at?: string | null;
-          }>;
-        };
-        result_info?: {
-          next_page_token?: string | null;
-        };
-      };
-      errors?: Array<{ message?: string }>;
-    };
-
-    if (!response.ok) {
-      throw new Error(
-        payload.errors
-          ?.map((item) => item.message)
-          .filter(Boolean)
-          .join("; ") || `Cloudflare API returned ${response.status}`,
-      );
-    }
-
-    const data = payload.result?.data;
-    const rawInstances = data?.instances ?? [];
-    const durableObjects = data?.durable_objects ?? [];
-    const instanceById = new Map(
-      rawInstances.map((item) => [item.id ?? "", item]),
-    );
-
-    if (durableObjects.length === 0) {
-      for (const instance of rawInstances) {
-        instances.push({
-          id: instance.id ?? null,
-          name: null,
-          state: deriveContainerInstanceState(instance),
-          location: instance.location ?? null,
-          version: instance.app_version ?? null,
-          created: instance.created_at ?? null,
-        });
-      }
-    } else {
-      for (const durableObject of durableObjects) {
-        const instance = durableObject.deployment_id
-          ? instanceById.get(durableObject.deployment_id)
-          : undefined;
-        instances.push({
-          id: durableObject.id ?? instance?.id ?? null,
-          name: durableObject.name ?? null,
-          state: instance ? deriveContainerInstanceState(instance) : "inactive",
-          location: instance?.location ?? null,
-          version: instance?.app_version ?? null,
-          created: instance?.created_at ?? durableObject.assigned_at ?? null,
-        });
-      }
-    }
-
-    pageToken = payload.result?.result_info?.next_page_token ?? undefined;
-  } while (pageToken);
-
-  return instances;
-}
-
-function deriveContainerInstanceState(instance: {
-  current_placement?: {
-    status?: {
-      container_status?: string | null;
-      health?: string | null;
-    } | null;
-  } | null;
-}): string {
-  const raw =
-    instance.current_placement?.status?.container_status ??
-    instance.current_placement?.status?.health;
-
-  switch (raw) {
-    case "placed":
-      return "provisioning";
-    case "running":
-    case "failed":
-    case "stopping":
-    case "stopped":
-    case "unhealthy":
-      return raw;
-    default:
-      return raw ?? "unknown";
-  }
 }
 
 function pickLocationHint(request: Request): DurableObjectLocationHint {
