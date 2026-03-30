@@ -5,8 +5,14 @@ const NOISE_HANDSHAKE_MSG1_PACKET_TYPE = 13;
 
 const textDecoder = new TextDecoder();
 
+export type Frame =
+  | string
+  | ArrayBuffer
+  | ArrayBufferView
+  | Blob;
+
 export async function extractNetworkNameFromFrame(
-  data: unknown,
+  data: Frame,
 ): Promise<string> {
   const frame = await toBytes(data);
   if (frame.byteLength <= PEER_MANAGER_HEADER_SIZE) {
@@ -34,7 +40,7 @@ export async function extractNetworkNameFromFrame(
   }
 }
 
-async function toBytes(data: unknown): Promise<Uint8Array> {
+async function toBytes(data: Frame): Promise<Uint8Array> {
   if (data instanceof ArrayBuffer) {
     return new Uint8Array(data);
   }

@@ -25,6 +25,8 @@
   - 负责把网络名绑定到实例名和地区 hint
 - `src/instance-catalog.ts`
   - 存放由外部同步任务写入的 `instanceName -> location/state/version`
+- `src/instance-catalog-sync.ts`
+  - 负责 Cloudflare Containers 实例拉取、目录同步和 `/where` 的 miss 自愈
 - `src/easytier-proto.ts`
   - 只解析首帧里需要的最小 protobuf 字段
 - `src/config.ts`
@@ -126,6 +128,12 @@ wrangler secret put CLOUDFLARE_API_TOKEN
 ```
 
 当前实现会每 5 分钟自动同步一次实例目录，并且在 `/api/routes/:networkName/where` 遇到 catalog miss 时尝试即时刷新一次。
+
+`/api/routes/:networkName/where` 里的 `instance` 现在只保留这些字段：
+
+- `source`
+- `instance`
+- `reason` 仅在 `instance-catalog-error` 时返回
 
 ## 部署说明
 

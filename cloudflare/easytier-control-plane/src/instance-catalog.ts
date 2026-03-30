@@ -6,7 +6,7 @@ const INSTANCES_KEY = "instances";
 
 type SyncPayload =
   | {
-      instances?: ContainerInstanceRecord[];
+      instances: ContainerInstanceRecord[];
       syncedAt?: string;
     }
   | ContainerInstanceRecord[];
@@ -17,7 +17,9 @@ export class InstanceCatalog extends DurableObject {
       const url = new URL(request.url);
 
       if (url.pathname === "/instances/sync" && request.method === "PUT") {
-        return Response.json(await this.replaceAll(await request.json()));
+        return Response.json(
+          await this.replaceAll((await request.json()) as SyncPayload),
+        );
       }
 
       if (url.pathname === "/instances" && request.method === "GET") {
@@ -39,7 +41,7 @@ export class InstanceCatalog extends DurableObject {
     }
   }
 
-  private async replaceAll(value: unknown): Promise<{
+  private async replaceAll(value: SyncPayload): Promise<{
     ok: true;
     count: number;
     syncedAt: string;
@@ -68,42 +70,24 @@ export class InstanceCatalog extends DurableObject {
   }
 
   private async loadInstances(): Promise<Record<string, SyncedInstanceRecord>> {
-    return (await this.ctx.storage.get<Record<string, SyncedInstanceRecord>>(
-      INSTANCES_KEY,
-    )) ?? {};
+    return (
+      (await this.ctx.storage.get<Record<string, SyncedInstanceRecord>>(
+        INSTANCES_KEY,
+      )) ?? {}
+    );
   }
 }
 
-function normalizeSyncPayload(value: unknown): {
+function normalizeSyncPayload(value: SyncPayload): {
   instances: ContainerInstanceRecord[];
   syncedAt?: string;
 } {
   if (Array.isArray(value)) {
-    return { instances: value as ContainerInstanceRecord[] };
-  }
-
-  if (!value || typeof value !== "object") {
-    throw new Error("sync payload must be a JSON object or array");
-  }
-
-  const payload = value as {
-    instances?: unknown;
-    syncedAt?: unknown;
-  };
-
-  if (!Array.isArray(payload.instances)) {
-    throw new Error("instances must be an array");
-  }
-
-  if (
-    payload.syncedAt !== undefined &&
-    typeof payload.syncedAt !== "string"
-  ) {
-    throw new Error("syncedAt must be a string");
+    return { instances: value };
   }
 
   return {
-    instances: payload.instances as ContainerInstanceRecord[],
-    syncedAt: payload.syncedAt,
+    instances: value.instances,
+    syncedAt: value.syncedAt,
   };
 }
