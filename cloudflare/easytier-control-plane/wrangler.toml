@@ -12,6 +12,9 @@ CF_EASYTIER_CONTAINER_APP_ID = "a030cea1-98bc-4639-b366-4eb49f16050a"
 [placement]
 mode = "smart"
 
+[triggers]
+crons = ["*/5 * * * *"]
+
 [[durable_objects.bindings]]
 name = "EASYTIER_CONTAINER"
 class_name = "EasyTierContainer"

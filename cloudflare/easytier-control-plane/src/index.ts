@@ -9,6 +9,7 @@ import { extractNetworkNameFromFrame } from "./easytier-proto";
 import { InstanceCatalog } from "./instance-catalog";
 import { NetworkRouter } from "./network-router";
 import type {
+  ContainerInstanceRecord,
   NetworkRouteRecord,
   ResolveNetworkRouteResult,
   StoredState,
@@ -17,10 +18,47 @@ import type {
 
 type WorkerEnv = Cloudflare.Env & {
   API_AUTH_TOKEN?: string;
+  CF_CONTAINERS_API_TOKEN?: string;
+  CF_API_TOKEN?: string;
+  CLOUDFLARE_API_TOKEN?: string;
 };
 
 type AppContext = {
   Bindings: WorkerEnv;
+};
+
+type CloudflareApiError = {
+  code?: number;
+  message?: string;
+};
+
+type CloudflareApiEnvelope<T> = {
+  success?: boolean;
+  errors?: CloudflareApiError[];
+  result?: T;
+  result_info?: {
+    next_page_token?: string | null;
+  };
+};
+
+type CloudflareContainerInstance = {
+  id?: string | null;
+  status?: string | null;
+  location?: string | null;
+  app_version?: number | null;
+  created_at?: string | null;
+};
+
+type CloudflareDurableObjectInstance = {
+  id?: string | null;
+  name?: string | null;
+  deployment_id?: string | null;
+  assigned_at?: string | null;
+};
+
+type CloudflareInstancesPage = {
+  instances?: CloudflareContainerInstance[];
+  durable_objects?: CloudflareDurableObjectInstance[];
 };
 
 const app = new Hono<AppContext>();
@@ -129,6 +167,11 @@ app.get("/api/routes/:networkName/where", async (c) => {
     ).then((response) => readJsonResponse<StoredState>(response)),
     getSyncedInstance(c.env, route.instanceName),
   ]);
+  const instanceView = await buildInstanceView(
+    c.env,
+    route.instanceName,
+    instanceResult,
+  );
 
   return c.json({
     networkName,
@@ -143,20 +186,7 @@ app.get("/api/routes/:networkName/where", async (c) => {
                 ? runtimeResult.reason.message
                 : String(runtimeResult.reason),
           },
-    instance:
-      instanceResult.status === "fulfilled"
-        ? {
-            source: "instance-catalog",
-            instance: instanceResult.value,
-          }
-        : {
-            source: "instance-catalog-error",
-            reason:
-              instanceResult.reason instanceof Error
-                ? instanceResult.reason.message
-                : String(instanceResult.reason),
-            instance: null,
-          },
+    instance: instanceView,
   });
 });
 
@@ -167,7 +197,23 @@ app.all("/connect", (c) =>
 );
 
 export { EasyTierContainer, InstanceCatalog, NetworkRouter };
-export default app;
+export default {
+  fetch(request, env, executionCtx) {
+    return app.fetch(request, env, executionCtx);
+  },
+  scheduled(_controller, env, executionCtx) {
+    executionCtx.waitUntil(
+      syncContainerCatalogFromCloudflare(env).catch((error) => {
+        console.error(
+          JSON.stringify({
+            message: "scheduled instance catalog sync failed",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }),
+    );
+  },
+} satisfies ExportedHandler<WorkerEnv>;
 
 function landingPage(c: Context<AppContext>): Response | Promise<Response> {
   if (isWebSocketRequest(c.req.raw)) {
@@ -500,6 +546,241 @@ async function getSyncedInstance(
     ),
   );
   return readJsonResponse<SyncedInstanceRecord | null>(response);
+}
+
+async function buildInstanceView(
+  env: WorkerEnv,
+  instanceName: string,
+  instanceResult: PromiseSettledResult<SyncedInstanceRecord | null>,
+) {
+  if (instanceResult.status !== "fulfilled") {
+    return {
+      source: "instance-catalog-error",
+      status: "error",
+      reason:
+        instanceResult.reason instanceof Error
+          ? instanceResult.reason.message
+          : String(instanceResult.reason),
+      instance: null,
+    };
+  }
+
+  if (instanceResult.value) {
+    return {
+      source: "instance-catalog",
+      status: "hit",
+      instance: instanceResult.value,
+    };
+  }
+
+  if (!getCloudflareApiToken(env)) {
+    return {
+      source: "instance-catalog-miss",
+      status: "miss",
+      instance: null,
+    };
+  }
+
+  try {
+    await syncContainerCatalogFromCloudflare(env);
+    const refreshedInstance = await getSyncedInstance(env, instanceName);
+    return refreshedInstance
+      ? {
+          source: "instance-catalog-refresh",
+          status: "hit-after-refresh",
+          instance: refreshedInstance,
+        }
+      : {
+          source: "instance-catalog-miss",
+          status: "miss",
+          instance: null,
+        };
+  } catch (error) {
+    return {
+      source: "instance-catalog-miss",
+      status: "miss",
+      refreshError: error instanceof Error ? error.message : String(error),
+      instance: null,
+    };
+  }
+}
+
+async function syncContainerCatalogFromCloudflare(env: WorkerEnv): Promise<{
+  ok: true;
+  count: number;
+  syncedAt: string;
+}> {
+  const token = getCloudflareApiToken(env);
+  if (!token) {
+    throw new Error(
+      "CF_API_TOKEN or CLOUDFLARE_API_TOKEN secret is required for automatic instance sync",
+    );
+  }
+
+  const instances = await listContainerInstancesFromCloudflare(env, token);
+  const response = await syncContainerInstances(env, {
+    syncedAt: new Date().toISOString(),
+    instances,
+  });
+  return readJsonResponse<{ ok: true; count: number; syncedAt: string }>(
+    response,
+  );
+}
+
+async function listContainerInstancesFromCloudflare(
+  env: WorkerEnv,
+  token: string,
+): Promise<ContainerInstanceRecord[]> {
+  const instances: ContainerInstanceRecord[] = [];
+  let pageToken: string | null | undefined;
+  const baseUrl = new URL(
+    `/client/v4/accounts/${env.CF_CONTAINERS_ACCOUNT_ID}/containers/dash/applications/${env.CF_EASYTIER_CONTAINER_APP_ID}/instances`,
+    "https://api.cloudflare.com",
+  );
+
+  do {
+    const url = new URL(baseUrl);
+    url.searchParams.set("per_page", "100");
+    if (pageToken) {
+      url.searchParams.set("page_token", pageToken);
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+    const payload =
+      await readCloudflareApiResponse<CloudflareInstancesPage>(response);
+    instances.push(
+      ...normalizeCloudflareInstancesPage(
+        extractCloudflareInstancesPage(payload),
+      ),
+    );
+    pageToken = extractCloudflareNextPageToken(payload);
+  } while (pageToken);
+
+  return instances;
+}
+
+async function readCloudflareApiResponse<T>(
+  response: Response,
+): Promise<CloudflareApiEnvelope<T>> {
+  const payload = (await response.json()) as CloudflareApiEnvelope<T>;
+  if (response.ok && payload.success !== false) {
+    return payload;
+  }
+
+  const message =
+    payload.errors
+      ?.map((item) => item.message)
+      .filter(Boolean)
+      .join("; ") || `request failed with status ${response.status}`;
+  throw new Error(message);
+}
+
+function normalizeCloudflareInstancesPage(
+  page: CloudflareInstancesPage | undefined,
+): ContainerInstanceRecord[] {
+  const instances = page?.instances ?? [];
+  const durableObjects = page?.durable_objects ?? [];
+
+  if (durableObjects.length === 0) {
+    return instances.map((instance) => ({
+      id: instance.id ?? null,
+      name: null,
+      state: normalizeCloudflareInstanceState(instance.status),
+      location: instance.location ?? null,
+      version: instance.app_version ?? null,
+      created: instance.created_at ?? null,
+    }));
+  }
+
+  const instanceByDeploymentId = new Map(
+    instances.map((instance) => [instance.id, instance] as const),
+  );
+
+  return durableObjects.map((durableObject) => {
+    const instance =
+      (durableObject.deployment_id
+        ? instanceByDeploymentId.get(durableObject.deployment_id)
+        : undefined) ?? null;
+    return {
+      id: durableObject.id ?? instance?.id ?? null,
+      name: durableObject.name ?? null,
+      state: instance
+        ? normalizeCloudflareInstanceState(instance.status)
+        : "inactive",
+      location: instance?.location ?? null,
+      version: instance?.app_version ?? null,
+      created: instance?.created_at ?? durableObject.assigned_at ?? null,
+    };
+  });
+}
+
+function extractCloudflareInstancesPage(
+  payload: CloudflareApiEnvelope<CloudflareInstancesPage>,
+): CloudflareInstancesPage | undefined {
+  const result = payload.result;
+  if (!isRecord(result)) {
+    return undefined;
+  }
+
+  const resultRecord = result as Record<string, unknown>;
+  if (isRecord(resultRecord.data)) {
+    return resultRecord.data as CloudflareInstancesPage;
+  }
+
+  return resultRecord as CloudflareInstancesPage;
+}
+
+function extractCloudflareNextPageToken(
+  payload: CloudflareApiEnvelope<CloudflareInstancesPage>,
+): string | null | undefined {
+  if (payload.result_info?.next_page_token) {
+    return payload.result_info.next_page_token;
+  }
+
+  const result = payload.result;
+  if (!isRecord(result)) {
+    return undefined;
+  }
+
+  const resultRecord = result as Record<string, unknown>;
+  if (!isRecord(resultRecord.result_info)) {
+    return undefined;
+  }
+  const resultInfo = resultRecord.result_info as Record<string, unknown>;
+  const nextPageToken = resultInfo.next_page_token;
+  return typeof nextPageToken === "string" ? nextPageToken : null;
+}
+
+function normalizeCloudflareInstanceState(status: string | null | undefined) {
+  switch (status) {
+    case "pending":
+    case "requested":
+    case "running":
+    case "failed":
+    case "stopping":
+    case "stopped":
+    case "unhealthy":
+      return status;
+    default:
+      return "unknown";
+  }
+}
+
+function getCloudflareApiToken(env: WorkerEnv): string | null {
+  return (
+    env.CF_CONTAINERS_API_TOKEN ??
+    env.CF_API_TOKEN ??
+    env.CLOUDFLARE_API_TOKEN ??
+    null
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function configureSharedRelayContainer(
