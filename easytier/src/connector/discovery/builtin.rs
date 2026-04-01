@@ -19,7 +19,7 @@ const BUILTIN_PEER_REFS: &[&str] = &[
     // "udp://root.remote-ap-southeast-1a.icewhale.io:11010",
     // "wss://root.remote-ap-southeast-1a.icewhale.io:11012",
     "wss://et.icewhale.io/",
-    // "peerlist+https://raw.githubusercontent.com/IceWhaleTech/EasyTier/provider/peerlists/builtin-peers.txt"
+    "peerlist+https://raw.githubusercontent.com/IceWhaleTech/EasyTier/icewhale/dev/peerlists/builtin-peers.txt"
 ];
 
 #[derive(Debug, Clone, PartialEq)]

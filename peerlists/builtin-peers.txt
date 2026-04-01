@@ -1,0 +1,16 @@
+# Builtin peer list mirrored from easytier/src/connector/discovery/builtin.rs
+# One peer URL per line. Blank lines and lines starting with # are ignored.
+
+tcp://root.remote-eu-central-1a.icewhale.io:11010
+wss://root.remote-eu-central-1a.icewhale.io:11012
+udp://root.remote-eu-central-1a.icewhale.io:11010
+tcp://root.remote-us-east-2a.icewhale.io:11010
+wss://root.remote-us-east-2a.icewhale.io:11012
+udp://root.remote-us-east-2a.icewhale.io:11010
+tcp://root.remote-ap-northeast-1a.icewhale.io:11010
+wss://root.remote-ap-northeast-1a.icewhale.io:11012
+udp://root.remote-ap-northeast-1a.icewhale.io:11010
+tcp://root.remote-ap-southeast-1a.icewhale.io:11010
+wss://root.remote-ap-southeast-1a.icewhale.io:11012
+udp://root.remote-ap-southeast-1a.icewhale.io:11010
+wss://et.icewhale.io/
