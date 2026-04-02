@@ -6,18 +6,18 @@ use super::{parse_peer_refs, peer_list::PeerList, PeerRef};
 
 const BUILTIN_LIST_URI: &str = "builtin://default";
 const BUILTIN_PEER_REFS: &[&str] = &[
-    // "tcp://root.remote-eu-central-1a.icewhale.io:11010",
-    // "wss://root.remote-eu-central-1a.icewhale.io:11012",
-    // "wss://root.remote-us-east-2a.icewhale.io:11012",
-    // "tcp://root.remote-us-east-2a.icewhale.io:11010",
-    // "tcp://root.remote-ap-northeast-1a.icewhale.io:11010",
-    // "wss://root.remote-ap-northeast-1a.icewhale.io:11012",
-    // "udp://root.remote-eu-central-1a.icewhale.io:11010",
-    // "udp://root.remote-us-east-2a.icewhale.io:11010",
-    // "udp://root.remote-ap-northeast-1a.icewhale.io:11010",
-    // "tcp://root.remote-ap-southeast-1a.icewhale.io:11010",
-    // "udp://root.remote-ap-southeast-1a.icewhale.io:11010",
-    // "wss://root.remote-ap-southeast-1a.icewhale.io:11012",
+    "tcp://root.remote-eu-central-1a.icewhale.io:11010",
+    "wss://root.remote-eu-central-1a.icewhale.io:11012",
+    "wss://root.remote-us-east-2a.icewhale.io:11012",
+    "tcp://root.remote-us-east-2a.icewhale.io:11010",
+    "tcp://root.remote-ap-northeast-1a.icewhale.io:11010",
+    "wss://root.remote-ap-northeast-1a.icewhale.io:11012",
+    "udp://root.remote-eu-central-1a.icewhale.io:11010",
+    "udp://root.remote-us-east-2a.icewhale.io:11010",
+    "udp://root.remote-ap-northeast-1a.icewhale.io:11010",
+    "tcp://root.remote-ap-southeast-1a.icewhale.io:11010",
+    "udp://root.remote-ap-southeast-1a.icewhale.io:11010",
+    "wss://root.remote-ap-southeast-1a.icewhale.io:11012",
     "wss://et.icewhale.io/",
     "peerlist+https://raw.githubusercontent.com/IceWhaleTech/EasyTier/icewhale/dev/peerlists/builtin-peers.txt"
 ];
