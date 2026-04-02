@@ -367,6 +367,13 @@ full = [
     "magic-dns",
     "zstd",
 ]
+relay = [
+    "mimalloc",
+    "wireguard",
+    "websocket",
+    "kcp",
+    "quic",
+]
 wireguard = ["dep:boringtun", "dep:ring"]
 quic = ["dep:quinn", "dep:quinn-plaintext", "dep:rustls", "dep:rcgen"]
 kcp = ["dep:kcp-sys"]
