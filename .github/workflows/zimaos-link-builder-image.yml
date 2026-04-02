@@ -3,7 +3,7 @@ name: Build ZimaOS Link Builder Image
 on:
   workflow_dispatch:
   push:
-    branches: ["develop", "main", "mt"]
+    branches: ["develop", "main", "mt", "icewhale/**"]
     paths:
       - ".github/images/zimaos-link-builder/Dockerfile"
       - ".github/workflows/zimaos-link-builder-image.yml"
@@ -16,7 +16,26 @@ env:
   IMAGE_REPO: ghcr.io/icewhaletech/easytier-zimaos-link-builder
 
 jobs:
+  pre_job:
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.branch_guard.outputs.should_skip }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        with:
+          fetch-depth: 0
+      - id: branch_guard
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: bash ./.github/scripts/should-skip-heavy-build.sh
+
   build-and-push:
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
