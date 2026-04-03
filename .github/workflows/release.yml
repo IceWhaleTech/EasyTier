@@ -15,6 +15,10 @@ on:
         description: "The run id of EasyTier Mobile in this repository"
         type: number
         required: true
+      mt_run_id:
+        description: "Optional run id of Build ZimaOS Link on mt branch"
+        type: string
+        required: false
       version:
         description: "Version for this release"
         type: string
@@ -22,6 +26,11 @@ on:
         required: true
       make_latest:
         description: "Mark this release as latest"
+        type: boolean
+        default: true
+        required: true
+      include_mt_assets:
+        description: "Include zimaos-link artifacts from mt branch"
         type: boolean
         default: true
         required: true
@@ -51,6 +60,7 @@ jobs:
       core_run_id: ${{ steps.resolve.outputs.core_run_id }}
       gui_run_id: ${{ steps.resolve.outputs.gui_run_id }}
       mobile_run_id: ${{ steps.resolve.outputs.mobile_run_id }}
+      mt_run_id: ${{ steps.resolve.outputs.mt_run_id }}
       version: ${{ steps.resolve.outputs.version }}
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
     steps:
@@ -59,11 +69,69 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
+          has_mt_release_artifacts() {
+            local run_id="$1"
+            local artifact_names
+
+            artifact_names="$(
+              gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
+                --jq '.artifacts[]? | select(.expired == false) | .name'
+            )"
+
+            grep -Eq '^zimaos-link-package-' <<< "$artifact_names"
+          }
+
+          resolve_mt_run_id() {
+            local requested_run_id="$1"
+            local resolved_run_id=""
+
+            if [[ -n "$requested_run_id" ]]; then
+              if has_mt_release_artifacts "$requested_run_id"; then
+                echo "$requested_run_id"
+                return 0
+              fi
+
+              echo "Requested mt run ${requested_run_id} has no zimaos-link-package artifacts" >&2
+              return 1
+            fi
+
+            while IFS= read -r candidate_run_id; do
+              [[ -n "$candidate_run_id" ]] || continue
+              if has_mt_release_artifacts "$candidate_run_id"; then
+                resolved_run_id="$candidate_run_id"
+                break
+              fi
+            done < <(
+              gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&branch=mt&per_page=100" \
+                --jq '.workflow_runs
+                  | map(select(.name == "Build ZimaOS Link" and .status == "completed" and .conclusion == "success"))
+                  | sort_by(.created_at)
+                  | reverse
+                  | .[]
+                  | .id'
+            )
+
+            echo "$resolved_run_id"
+          }
+
+          mt_run_id=""
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ inputs.include_mt_assets }}" == "true" ]]; then
+              mt_run_id="$(resolve_mt_run_id "${{ inputs.mt_run_id }}")"
+              if [[ -z "$mt_run_id" ]]; then
+                echo "No successful mt zimaos-link package run is available for this release" >&2
+                exit 1
+              fi
+            fi
+
             echo "ready=true" >> "$GITHUB_OUTPUT"
             echo "core_run_id=${{ inputs.core_run_id }}" >> "$GITHUB_OUTPUT"
             echo "gui_run_id=${{ inputs.gui_run_id }}" >> "$GITHUB_OUTPUT"
             echo "mobile_run_id=${{ inputs.mobile_run_id }}" >> "$GITHUB_OUTPUT"
+            echo "mt_run_id=${mt_run_id}" >> "$GITHUB_OUTPUT"
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "artifact_name=easytier-release-${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             exit 0
@@ -76,9 +144,11 @@ jobs:
           core_run_id="$(echo "$RUNS_JSON" | jq -r '.workflow_runs | map(select(.name == "EasyTier Core" and .status == "completed" and .conclusion == "success")) | sort_by(.created_at) | last | .id // empty')"
           gui_run_id="$(echo "$RUNS_JSON" | jq -r '.workflow_runs | map(select(.name == "EasyTier GUI" and .status == "completed" and .conclusion == "success")) | sort_by(.created_at) | last | .id // empty')"
           mobile_run_id="$(echo "$RUNS_JSON" | jq -r '.workflow_runs | map(select(.name == "EasyTier Mobile" and .status == "completed" and .conclusion == "success")) | sort_by(.created_at) | last | .id // empty')"
+          mt_run_id="$(resolve_mt_run_id "")"
 
           if [[ -z "$core_run_id" || -z "$gui_run_id" || -z "$mobile_run_id" ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "mt_run_id=${mt_run_id}" >> "$GITHUB_OUTPUT"
             echo "version=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
             echo "artifact_name=easytier-release-dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
             exit 0
@@ -88,6 +158,7 @@ jobs:
           echo "core_run_id=${core_run_id}" >> "$GITHUB_OUTPUT"
           echo "gui_run_id=${gui_run_id}" >> "$GITHUB_OUTPUT"
           echo "mobile_run_id=${mobile_run_id}" >> "$GITHUB_OUTPUT"
+          echo "mt_run_id=${mt_run_id}" >> "$GITHUB_OUTPUT"
           echo "version=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "artifact_name=easytier-release-dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
@@ -122,6 +193,36 @@ jobs:
           run_id: ${{ needs.resolve_runs.outputs.mobile_run_id }}
           repo: ${{ github.repository }}
           path: release_assets_nozip
+
+      - name: Download mt Artifact
+        if: needs.resolve_runs.outputs.mt_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MT_RUN_ID: ${{ needs.resolve_runs.outputs.mt_run_id }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p release_assets_nozip
+
+          mapfile -t artifact_names < <(
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${MT_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[]?
+                | select(.expired == false and (.name | startswith("zimaos-link-package-")))
+                | .name'
+          )
+
+          if [[ ${#artifact_names[@]} -eq 0 ]]; then
+            echo "No mt release package artifacts found in run ${MT_RUN_ID}" >&2
+            exit 1
+          fi
+
+          for artifact_name in "${artifact_names[@]}"; do
+            gh run download "${MT_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name "${artifact_name}" --dir release_assets_nozip
+          done
+
+      - name: Skip mt Artifact
+        if: needs.resolve_runs.outputs.mt_run_id == ''
+        run: echo "No mt zimaos-link artifacts selected for this release"
 
       - name: Zip release assets
         env:

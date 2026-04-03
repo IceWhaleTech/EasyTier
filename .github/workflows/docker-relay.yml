@@ -1,0 +1,199 @@
+name: EasyTier Relay Docker
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag for this relay image build"
+        type: string
+        default: "relay"
+        required: true
+  push:
+    branches: ["dev", "icewhale/dev"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-relay-${{ github.sha || inputs.image_tag || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pre_job:
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ github.event_name == 'push' && ((steps.skip_check.outputs.should_skip == 'true' && github.ref_name != 'dev') || steps.branch_guard.outputs.should_skip == 'true') }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5
+        with:
+          concurrent_skipping: "same_content_newer"
+          skip_after_successful_duplicate: "true"
+          cancel_others: "true"
+          paths: '["Cargo.toml", "Cargo.lock", "easytier/**", ".github/workflows/docker-relay.yml", ".github/workflows/Dockerfile.relay", ".github/workflows/install_rust.sh", ".github/scripts/should-skip-heavy-build.sh"]'
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        with:
+          fetch-depth: 0
+      - id: branch_guard
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'icewhale/')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: bash ./.github/scripts/should-skip-heavy-build.sh
+
+  build_relay_binary:
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - TARGET: x86_64-unknown-linux-musl
+            ARTIFACT_NAME: linux-x86_64
+          - TARGET: arm-unknown-linux-musleabihf
+            ARTIFACT_NAME: linux-armhf
+          - TARGET: armv7-unknown-linux-musleabihf
+            ARTIFACT_NAME: linux-armv7hf
+          - TARGET: riscv64gc-unknown-linux-musl
+            ARTIFACT_NAME: linux-riscv64
+    runs-on: ubuntu-22.04
+    env:
+      TARGET: ${{ matrix.TARGET }}
+      OS: ubuntu-22.04
+      GUI_TARGET: ""
+      RELAY_FEATURES: relay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ""
+          shared-key: "relay-registry"
+          cache-targets: "false"
+
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build relay core
+        run: |
+          bash ./.github/workflows/install_rust.sh
+
+          if [[ -d "./musl_gcc/sysroot" ]]; then
+            export BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$(readlink -f ./musl_gcc/sysroot)
+          fi
+
+          cargo build --locked --release --target "$TARGET" \
+            --package easytier \
+            --bin easytier-core \
+            --no-default-features \
+            --features "$RELAY_FEATURES"
+
+      - name: Pack relay artifact
+        run: |
+          mkdir -p ./artifacts
+          mv "./target/$TARGET/release/easytier-core" ./artifacts/
+
+      - name: Upload relay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: easytier-relay-${{ matrix.ARTIFACT_NAME }}
+          path: ./artifacts/*
+          compression-level: 0
+
+  docker:
+    needs: build_relay_binary
+    if: needs.build_relay_binary.result == 'success'
+    runs-on: [self-hosted, Linux, X64, easytier]
+    env:
+      DOCKERHUB_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/easytier
+      GHCR_REPO_OWNER: ${{ github.repository_owner }}
+      DOCKERHUB_ENABLED: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare local Docker binfmt
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm,riscv64
+
+      - name: Verify local Docker host
+        run: docker info
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: env.DOCKERHUB_ENABLED == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download relay x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: easytier-relay-linux-x86_64
+          path: docker_context/easytier-relay-linux-x86_64
+
+      - name: Download relay armhf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: easytier-relay-linux-armhf
+          path: docker_context/easytier-relay-linux-armhf
+
+      - name: Download relay armv7 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: easytier-relay-linux-armv7hf
+          path: docker_context/easytier-relay-linux-armv7hf
+
+      - name: Download relay riscv64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: easytier-relay-linux-riscv64
+          path: docker_context/easytier-relay-linux-riscv64
+
+      - name: Prepare Docker tags
+        id: tags
+        run: |
+          GHCR_REPO="ghcr.io/${GHCR_REPO_OWNER,,}/easytier"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            GHCR_TAGS="${GHCR_REPO}:${{ inputs.image_tag }}"
+          else
+            GHCR_TAGS="${GHCR_REPO}:relay,${GHCR_REPO}:relay-${SHORT_SHA}"
+          fi
+
+          if [[ "${DOCKERHUB_ENABLED}" == "true" ]]; then
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              DOCKERHUB_TAGS="${DOCKERHUB_REPO}:${{ inputs.image_tag }}"
+            else
+              DOCKERHUB_TAGS="${DOCKERHUB_REPO}:relay,${DOCKERHUB_REPO}:relay-${SHORT_SHA}"
+            fi
+            ALL_TAGS="${DOCKERHUB_TAGS},${GHCR_TAGS}"
+          else
+            ALL_TAGS="${GHCR_TAGS}"
+          fi
+
+          echo "tags=${ALL_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Generated tags: ${ALL_TAGS}"
+
+      - name: Build and push relay image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker_context
+          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/riscv64
+          push: true
+          file: .github/workflows/Dockerfile.relay
+          tags: ${{ steps.tags.outputs.tags }}
