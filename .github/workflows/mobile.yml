@@ -2,7 +2,7 @@ name: EasyTier Mobile
 
 on:
   push:
-    branches: ["develop", "main", "releases/**", "dev", "icewhale/**"]
+    branches: ["develop", "main", "releases/**", "dev", "icewhale/**", "!icewhale/dev"]
   pull_request:
     branches: ["develop", "main"]
 
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     # Map a step output to a job output
     outputs:
-      should_skip: ${{ (steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') && github.ref_name != 'dev') || steps.branch_guard.outputs.should_skip == 'true' }}
+      should_skip: ${{ (steps.skip_check.outputs.should_skip == 'true' && !startsWith(github.ref_name, 'releases/') && github.ref_name != 'dev') || steps.branch_guard.outputs.should_skip == 'true' || github.ref_name == 'icewhale/dev' || github.head_ref == 'icewhale/dev' }}
     steps:
       - id: skip_check
         uses: fkirc/skip-duplicate-actions@v5
