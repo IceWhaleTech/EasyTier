@@ -338,7 +338,6 @@ fn default_mesh_network_config(
         latency_first: Some(true),
         bind_device: Some(true),
         multi_thread: Some(true),
-        disable_encryption: Some(true),
         ..Default::default()
     }
 }
