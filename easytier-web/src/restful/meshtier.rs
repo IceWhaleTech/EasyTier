@@ -322,9 +322,9 @@ fn default_mesh_network_config(
 ) -> NetworkConfig {
     NetworkConfig {
         instance_id: Some(instance_id.to_string()),
-        dhcp: Some(true),
-        virtual_ipv4: Some(String::new()),
-        network_length: Some(16),
+        dhcp: Some(false),
+        virtual_ipv4: Some("10.126.126.1".to_string()),
+        network_length: Some(24),
         hostname: Some(default_hostname()),
         network_name: Some(network_name.to_string()),
         network_secret: Some(network_secret.to_string()),
