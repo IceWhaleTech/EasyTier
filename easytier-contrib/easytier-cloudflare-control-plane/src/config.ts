@@ -1,6 +1,7 @@
 import {
   DEFAULT_INSTANCE,
   DEFAULT_RPC_PORTAL,
+  SHARED_RELAY_NETWORK_NAME,
   DEFAULT_WS_LISTENER,
 } from "./constants";
 import type { ConfigRecord, InstanceConfig, JsonValue } from "./types/index";
@@ -147,4 +148,17 @@ export function formatConfigExample(): InstanceConfig {
     listeners: [DEFAULT_WS_LISTENER],
     extraArgs: [],
   };
+}
+
+export function buildSharedRelayConfig(instanceName: string): InstanceConfig {
+  return normalizeConfig({
+    instanceName,
+    networkName: SHARED_RELAY_NETWORK_NAME,
+    networkSecret: SHARED_RELAY_NETWORK_NAME,
+    noTun: true,
+    rpcPortal: DEFAULT_RPC_PORTAL,
+    peers: [],
+    listeners: [DEFAULT_WS_LISTENER],
+    extraArgs: [],
+  });
 }

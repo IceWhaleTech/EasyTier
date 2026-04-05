@@ -1,11 +1,24 @@
-import { formatConfigExample, RequestError } from "./config";
-import type { ErrorLike } from "./types/index";
-import { DEFAULT_INSTANCE } from "./constants";
+import {
+  buildSharedRelayConfig,
+  formatConfigExample,
+  RequestError,
+} from "./config";
+import { DEFAULT_INSTANCE, INITIAL_MESSAGE_TIMEOUT_MS } from "./constants";
 import { EasyTierContainer, MyContainer } from "./easytier-container";
+import {
+  extractNetworkRouteIdentityFromFrame,
+  type Frame,
+} from "./easytier-proto";
+import { NetworkRouter } from "./network-router";
+import type {
+  ErrorLike,
+  NetworkRouteRecord,
+  ResolveNetworkRouteResult,
+} from "./types/index";
 
 type WorkerEnv = Cloudflare.Env;
 
-export { EasyTierContainer, MyContainer };
+export { EasyTierContainer, MyContainer, NetworkRouter };
 
 export default {
   async fetch(request, env, executionCtx) {
@@ -28,10 +41,13 @@ async function routeRequest(
     isWebSocketRequest(request) &&
     (url.pathname === "/" || url.pathname === "/connect")
   ) {
-    return proxyWebSocketToContainer(env, request);
+    return acceptRoutedWebSocket(request, env, executionCtx);
   }
 
-  if (request.method === "GET" && url.pathname === "/") {
+  if (
+    request.method === "GET" &&
+    url.pathname === "/"
+  ) {
     return landingPage(request);
   }
 
@@ -64,7 +80,10 @@ async function routeRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/connect") {
-    return Response.json({ error: "websocket upgrade required" }, { status: 426 });
+    return Response.json(
+      { error: "websocket upgrade required" },
+      { status: 426 },
+    );
   }
 
   return Response.json({ error: "route not found" }, { status: 404 });
@@ -73,7 +92,7 @@ async function routeRequest(
 function landingPage(request: Request): Response {
   const url = new URL(request.url);
   const wsProtocol = url.protocol === "http:" ? "ws:" : "wss:";
-  const websocketUrl = `${wsProtocol}//${url.host}/connect`;
+  const websocketUrl = `${wsProtocol}//${url.host}`;
   const configExample = JSON.stringify(formatConfigExample(), null, 2);
   const cliExample = [
     "cargo run -p easytier --bin easytier-core -- \\",
@@ -135,7 +154,7 @@ function landingPage(request: Request): Response {
   <body>
     <main>
       <h1>EasyTier Cloudflare Control Plane</h1>
-      <p>Phase 1 runs a single Cloudflare Container backed by <code>docker.io/easytier/easytier:v2.5.0</code> and forwards EasyTier WebSocket traffic to it.</p>
+      <p>One websocket endpoint routes ordinary EasyTier handshakes by <code>network_name + secret_digest</code> and falls back to <code>network_name</code> for Noise handshakes.</p>
 
       <div class="card">
         <strong>Endpoints</strong>
@@ -146,7 +165,7 @@ function landingPage(request: Request): Response {
           <li><code>PUT /api/instance</code></li>
           <li><code>POST /api/instance/start</code></li>
           <li><code>POST /api/instance/stop</code></li>
-          <li><code>WS /connect</code></li>
+          <li><code>WS /</code></li>
         </ul>
       </div>
 
@@ -175,12 +194,273 @@ function landingPage(request: Request): Response {
   );
 }
 
+function acceptRoutedWebSocket(
+  request: Request,
+  env: WorkerEnv,
+  executionCtx: ExecutionContext,
+): Response {
+  const pair = new WebSocketPair();
+  const clientSocket = pair[0];
+  const workerSocket = pair[1];
+
+  workerSocket.accept();
+  executionCtx.waitUntil(handleRoutedWebSocket(workerSocket, request, env));
+
+  return new Response(null, {
+    status: 101,
+    webSocket: clientSocket,
+  });
+}
+
+async function handleRoutedWebSocket(
+  clientSocket: WebSocket,
+  request: Request,
+  env: WorkerEnv,
+): Promise<void> {
+  let upstreamSocket: WebSocket | null = null;
+  let clientClosed = false;
+  let firstMessageResolved = false;
+  const pendingMessages: Frame[] = [];
+
+  let resolveFirstMessage!: (data: Frame) => void;
+  let rejectFirstMessage!: (reason?: ErrorLike) => void;
+
+  const firstMessage = new Promise<Frame>((resolve, reject) => {
+    resolveFirstMessage = resolve;
+    rejectFirstMessage = reject;
+  });
+
+  const timeout = setTimeout(() => {
+    if (!firstMessageResolved) {
+      rejectFirstMessage(
+        new Error("timed out waiting for first EasyTier frame"),
+      );
+    }
+  }, INITIAL_MESSAGE_TIMEOUT_MS);
+
+  clientSocket.addEventListener("message", (event) => {
+    const data = event.data as Frame;
+
+    if (!upstreamSocket) {
+      pendingMessages.push(data);
+      if (!firstMessageResolved) {
+        firstMessageResolved = true;
+        clearTimeout(timeout);
+        resolveFirstMessage(data);
+      }
+      return;
+    }
+
+    void forwardToUpstream(upstreamSocket, data, clientSocket);
+  });
+
+  clientSocket.addEventListener("close", (event) => {
+    clientClosed = true;
+    clearTimeout(timeout);
+    if (!firstMessageResolved) {
+      rejectFirstMessage(
+        new Error("client closed before routing completed"),
+      );
+    }
+    if (upstreamSocket) {
+      closeSocket(upstreamSocket, event.code, event.reason);
+    }
+  });
+
+  clientSocket.addEventListener("error", () => {
+    clearTimeout(timeout);
+    if (!firstMessageResolved) {
+      rejectFirstMessage(
+        new Error("client websocket failed before first frame"),
+      );
+    }
+    if (upstreamSocket) {
+      closeSocket(upstreamSocket, 1011, "client websocket error");
+    }
+  });
+
+  try {
+    const firstFrame = await firstMessage;
+    const routeIdentity = await extractNetworkRouteIdentityFromFrame(firstFrame);
+    const route = await resolveNetworkRoute(
+      env,
+      routeIdentity.networkName,
+      routeIdentity.routeKey,
+      routeIdentity.routeMode,
+      routeIdentity.secretDigestHex,
+      pickLocationHint(request),
+    );
+
+    await configureSharedRelayContainer(env, route);
+
+    if (clientClosed) {
+      return;
+    }
+
+    upstreamSocket = await openContainerSocket(request, env, route);
+    const activeUpstream = upstreamSocket;
+
+    activeUpstream.addEventListener("message", (event) => {
+      void forwardToClient(clientSocket, event.data, activeUpstream);
+    });
+    activeUpstream.addEventListener("close", (event) => {
+      closeSocket(clientSocket, event.code, event.reason);
+    });
+    activeUpstream.addEventListener("error", () => {
+      closeSocket(clientSocket, 1011, "upstream websocket error");
+    });
+
+    for (const message of pendingMessages) {
+      await sendNormalized(activeUpstream, message);
+    }
+    pendingMessages.length = 0;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "failed to route websocket by network identity",
+        error: error instanceof Error ? error.message : String(error),
+        path: new URL(request.url).pathname,
+      }),
+    );
+    closeSocket(clientSocket, 1011, "routing failed");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveNetworkRoute(
+  env: WorkerEnv,
+  networkName: string,
+  routeKey: string,
+  routeMode: NetworkRouteRecord["routeMode"],
+  secretDigestHex: string | null,
+  requestedLocationHint: DurableObjectLocationHint,
+): Promise<ResolveNetworkRouteResult> {
+  const response = await env.NETWORK_ROUTER.getByName(routeKey).fetch(
+    new Request(buildInternalUrl("/route"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        networkName,
+        routeKey,
+        routeMode,
+        secretDigestHex,
+        requestedLocationHint,
+      }),
+    }),
+  );
+  return readJsonResponse<ResolveNetworkRouteResult>(response);
+}
+
+async function configureSharedRelayContainer(
+  env: WorkerEnv,
+  route: NetworkRouteRecord,
+): Promise<void> {
+  const config = buildSharedRelayConfig(route.instanceName);
+  await readJsonResponse<{ ok: boolean }>(await sendContainerControlRequest(
+    env,
+    route.instanceName,
+    route.locationHint,
+    "/control/config",
+    "PUT",
+    config,
+  ));
+  await readJsonResponse<unknown>(await sendContainerControlRequest(
+    env,
+    route.instanceName,
+    route.locationHint,
+    "/control/start",
+    "POST",
+  ));
+}
+
+async function configureDefaultSharedRelayContainer(env: WorkerEnv): Promise<void> {
+  const config = buildSharedRelayConfig(DEFAULT_INSTANCE);
+  await readJsonResponse<{ ok: boolean }>(await getContainerStub(env).fetch(
+    new Request(buildInternalUrl("/control/config"), {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(config),
+    }),
+  ));
+  await readJsonResponse<unknown>(await getContainerStub(env).fetch(
+    new Request(buildInternalUrl("/control/start"), {
+      method: "POST",
+    }),
+  ));
+}
+
+async function openContainerSocket(
+  request: Request,
+  env: WorkerEnv,
+  route: NetworkRouteRecord,
+): Promise<WebSocket> {
+  const upstreamRequest = new Request(buildInternalUrl("/"), request);
+  const routedStub = getRoutedContainerStub(
+    env,
+    route.instanceName,
+    route.locationHint,
+  );
+  let response: Response;
+
+  try {
+    response = await routedStub.fetch(upstreamRequest);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("The container is not running")) {
+      throw error;
+    }
+
+    await readJsonResponse<unknown>(await sendContainerControlRequest(
+      env,
+      route.instanceName,
+      route.locationHint,
+      "/control/start",
+      "POST",
+    ));
+    await delay(500);
+    response = await routedStub.fetch(new Request(buildInternalUrl("/"), request));
+  }
+
+  if (response.status === 101 && response.webSocket) {
+    response.webSocket.accept();
+    return response.webSocket;
+  }
+
+  await configureDefaultSharedRelayContainer(env);
+  const fallbackResponse = await getContainerStub(env).fetch(upstreamRequest);
+  if (fallbackResponse.status !== 101 || !fallbackResponse.webSocket) {
+    throw new Error(
+      `container websocket upgrade failed with status ${response.status}, fallback status ${fallbackResponse.status}`,
+    );
+  }
+
+  fallbackResponse.webSocket.accept();
+  return fallbackResponse.webSocket;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isWebSocketRequest(request: Request): boolean {
   return request.headers.get("Upgrade")?.toLowerCase() === "websocket";
 }
 
 function getContainerStub(env: WorkerEnv) {
   return env.EASYTIER_CONTAINER.getByName(DEFAULT_INSTANCE);
+}
+
+function getRoutedContainerStub(
+  env: WorkerEnv,
+  instanceName: string,
+  locationHint: DurableObjectLocationHint,
+) {
+  return env.EASYTIER_CONTAINER.getByName(instanceName, { locationHint });
 }
 
 function buildInternalUrl(pathname: string): string {
@@ -192,7 +472,9 @@ function proxyToContainer(
   request: Request,
   pathname: string,
 ): Promise<Response> {
-  return getContainerStub(env).fetch(new Request(buildInternalUrl(pathname), request));
+  return getContainerStub(env).fetch(
+    new Request(buildInternalUrl(pathname), request),
+  );
 }
 
 function sendControlRequest(
@@ -202,6 +484,23 @@ function sendControlRequest(
 ): Promise<Response> {
   return getContainerStub(env).fetch(
     new Request(buildInternalUrl(pathname), { method }),
+  );
+}
+
+function sendContainerControlRequest(
+  env: WorkerEnv,
+  instanceName: string,
+  locationHint: DurableObjectLocationHint,
+  pathname: string,
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  body?: object,
+): Promise<Response> {
+  return getRoutedContainerStub(env, instanceName, locationHint).fetch(
+    new Request(buildInternalUrl(pathname), {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
   );
 }
 
@@ -218,11 +517,79 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   return data;
 }
 
-function proxyWebSocketToContainer(
-  env: WorkerEnv,
-  request: Request,
-): Promise<Response> {
-  return getContainerStub(env).fetch(new Request(buildInternalUrl("/"), request));
+function pickLocationHint(request: Request): DurableObjectLocationHint {
+  const continent = (
+    request.cf as IncomingRequestCfProperties | undefined
+  )?.continent?.toUpperCase();
+
+  switch (continent) {
+    case "SA":
+      return "sam";
+    case "EU":
+    case "AF":
+      return "weur";
+    case "AS":
+    case "OC":
+    case "ME":
+      return "apac";
+    case "NA":
+    default:
+      return "enam";
+  }
+}
+
+function closeSocket(socket: WebSocket, code = 1000, reason = "closed"): void {
+  try {
+    socket.close(code, reason.slice(0, 123));
+  } catch {
+    // Ignore invalid-state close attempts during teardown.
+  }
+}
+
+async function forwardToUpstream(
+  upstreamSocket: WebSocket,
+  data: Frame,
+  clientSocket: WebSocket,
+): Promise<void> {
+  try {
+    await sendNormalized(upstreamSocket, data);
+  } catch (error) {
+    console.error("failed to forward client websocket message", error);
+    closeSocket(clientSocket, 1011, "upstream send failed");
+    closeSocket(upstreamSocket, 1011, "upstream send failed");
+  }
+}
+
+async function forwardToClient(
+  clientSocket: WebSocket,
+  data: unknown,
+  upstreamSocket: WebSocket,
+): Promise<void> {
+  try {
+    await sendNormalized(clientSocket, data);
+  } catch (error) {
+    console.error("failed to forward upstream websocket message", error);
+    closeSocket(clientSocket, 1011, "client send failed");
+    closeSocket(upstreamSocket, 1011, "client send failed");
+  }
+}
+
+async function sendNormalized(socket: WebSocket, data: unknown): Promise<void> {
+  if (data instanceof Blob) {
+    socket.send(await data.arrayBuffer());
+    return;
+  }
+
+  if (
+    typeof data === "string" ||
+    data instanceof ArrayBuffer ||
+    ArrayBuffer.isView(data)
+  ) {
+    socket.send(data);
+    return;
+  }
+
+  throw new Error("unsupported websocket payload");
 }
 
 function escapeHtml(value: string): string {

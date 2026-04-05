@@ -25,8 +25,12 @@ export class EasyTierContainer extends Container {
         const config = parseInstanceConfig(
           (await request.json()) as ConfigRecord,
         );
+        const previousConfig = await this.ctx.storage.get<InstanceConfig>("config");
         await this.ctx.storage.put("config", config);
         await this.ctx.storage.put("updatedAt", new Date().toISOString());
+        if (JSON.stringify(previousConfig ?? null) !== JSON.stringify(config)) {
+          await this.stopInstance();
+        }
         return Response.json({ ok: true, config });
       }
 
@@ -68,11 +72,9 @@ export class EasyTierContainer extends Container {
 
       const config = await this.requireConfig();
       await this.ensureStarted(config);
-
       if (isWebSocketRequest(request)) {
         return this.proxyWebSocketRequest(request);
       }
-
       return super.fetch(request);
     } catch (error) {
       return toErrorResponse(error as ErrorLike);
@@ -218,22 +220,6 @@ export class EasyTierContainer extends Container {
 
 export class MyContainer extends EasyTierContainer {}
 
-function toErrorResponse(error: ErrorLike): Response {
-  const status = error instanceof RequestError ? error.status : 500;
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (status >= 500) {
-    console.error(
-      JSON.stringify({
-        message: "container request failed",
-        error: message,
-      }),
-    );
-  }
-
-  return Response.json({ error: message }, { status });
-}
-
 function isWebSocketRequest(request: Request): boolean {
   return request.headers.get("Upgrade")?.toLowerCase() === "websocket";
 }
@@ -293,4 +279,20 @@ function closeSocket(socket: WebSocket, code = 1000, reason = "closed"): void {
   } catch {
     // Ignore invalid-state close attempts during teardown.
   }
+}
+
+function toErrorResponse(error: ErrorLike): Response {
+  const status = error instanceof RequestError ? error.status : 500;
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (status >= 500) {
+    console.error(
+      JSON.stringify({
+        message: "container request failed",
+        error: message,
+      }),
+    );
+  }
+
+  return Response.json({ error: message }, { status });
 }

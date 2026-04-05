@@ -17,6 +17,30 @@ export interface StoredState {
   } | null;
 }
 
+export type NetworkRouteMode = "digest" | "network-name-only";
+
+export interface ExtractedNetworkRouteIdentity {
+  networkName: string;
+  routeKey: string;
+  routeMode: NetworkRouteMode;
+  secretDigestHex: string | null;
+}
+
+export interface NetworkRouteRecord {
+  networkName: string;
+  routeKey: string;
+  routeMode: NetworkRouteMode;
+  secretDigestHex: string | null;
+  instanceName: string;
+  locationHint: DurableObjectLocationHint;
+  createdAt: string;
+  lastResolvedAt: string;
+}
+
+export interface ResolveNetworkRouteResult extends NetworkRouteRecord {
+  created: boolean;
+}
+
 // Node info in network registry
 export interface NodeInfo {
   doId: string;
@@ -35,7 +59,7 @@ export interface NetworkRegistry {
 // Worker environment bindings
 export interface WorkerEnv {
   EASYTIER_CONTAINER: DurableObjectNamespace;
-  NETWORK_REGISTRY: KVNamespace;
+  NETWORK_ROUTER: DurableObjectNamespace;
 }
 
 // WebSocket data types

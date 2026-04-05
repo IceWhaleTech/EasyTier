@@ -11,9 +11,22 @@ export type Frame =
   | ArrayBufferView
   | Blob;
 
+export type ExtractedNetworkRouteIdentity = {
+  networkName: string;
+  routeKey: string;
+  routeMode: "digest" | "network-name-only";
+  secretDigestHex: string | null;
+};
+
 export async function extractNetworkNameFromFrame(
   data: Frame,
 ): Promise<string> {
+  return (await extractNetworkRouteIdentityFromFrame(data)).networkName;
+}
+
+export async function extractNetworkRouteIdentityFromFrame(
+  data: Frame,
+): Promise<ExtractedNetworkRouteIdentity> {
   const frame = await toBytes(data);
   if (frame.byteLength <= PEER_MANAGER_HEADER_SIZE) {
     throw new Error(
@@ -25,16 +38,33 @@ export async function extractNetworkNameFromFrame(
   const payload = frame.subarray(PEER_MANAGER_HEADER_SIZE);
 
   switch (packetType) {
-    case HANDSHAKE_PACKET_TYPE:
-      return readProtoStringField(payload, 5);
+    case HANDSHAKE_PACKET_TYPE: {
+      const networkName = readProtoStringField(payload, 5);
+      const secretDigest = readProtoBytesField(payload, 6);
+      const secretDigestHex = toHex(secretDigest);
+      return {
+        networkName,
+        routeKey: `digest:${networkName}:${secretDigestHex}`,
+        routeMode: "digest",
+        secretDigestHex,
+      };
+    }
     case NOISE_HANDSHAKE_MSG1_PACKET_TYPE:
       if (payload.byteLength <= NOISE_XX_EPHEMERAL_KEY_SIZE) {
         throw new Error("Noise handshake frame is too short");
       }
-      return readProtoStringField(
-        payload.subarray(NOISE_XX_EPHEMERAL_KEY_SIZE),
-        2,
-      );
+      return {
+        networkName: readProtoStringField(
+          payload.subarray(NOISE_XX_EPHEMERAL_KEY_SIZE),
+          2,
+        ),
+        routeKey: `network:${readProtoStringField(
+          payload.subarray(NOISE_XX_EPHEMERAL_KEY_SIZE),
+          2,
+        )}`,
+        routeMode: "network-name-only",
+        secretDigestHex: null,
+      };
     default:
       throw new Error(`unsupported EasyTier packet type: ${packetType}`);
   }
@@ -57,6 +87,10 @@ async function toBytes(data: Frame): Promise<Uint8Array> {
 }
 
 function readProtoStringField(buffer: Uint8Array, fieldNumber: number): string {
+  return textDecoder.decode(readProtoBytesField(buffer, fieldNumber));
+}
+
+function readProtoBytesField(buffer: Uint8Array, fieldNumber: number): Uint8Array {
   let offset = 0;
 
   while (offset < buffer.byteLength) {
@@ -78,13 +112,19 @@ function readProtoStringField(buffer: Uint8Array, fieldNumber: number): string {
         throw new Error("protobuf field extends past frame boundary");
       }
 
-      return textDecoder.decode(buffer.subarray(offset, end));
+      return buffer.subarray(offset, end);
     }
 
     offset = skipWireValue(buffer, offset, wireType);
   }
 
   throw new Error(`protobuf field ${fieldNumber} not found`);
+}
+
+function toHex(buffer: Uint8Array): string {
+  return [...buffer]
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function readVarint(

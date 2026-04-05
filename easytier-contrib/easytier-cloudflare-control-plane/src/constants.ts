@@ -3,3 +3,5 @@ export const DEFAULT_RPC_PORTAL = "127.0.0.1:15888";
 export const DEFAULT_WS_LISTENER = "ws://0.0.0.0:11011/";
 export const INITIAL_MESSAGE_TIMEOUT_MS = 5_000;
 export const INTERNAL_WS_PORT = 11011;
+export const SHARED_RELAY_NETWORK_NAME = "shared";
+export const SHARED_INGRESS_POOL_SIZE = 8;

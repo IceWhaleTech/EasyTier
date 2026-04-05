@@ -9,15 +9,23 @@ mode = "smart"
 class_name = "MyContainer"
 image = "docker.io/easytier/easytier:v2.5.0"
 instance_type = "basic"
-max_instances = 1
+max_instances = 100
 
 [[durable_objects.bindings]]
 name = "EASYTIER_CONTAINER"
 class_name = "MyContainer"
 
+[[durable_objects.bindings]]
+name = "NETWORK_ROUTER"
+class_name = "NetworkRouter"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MyContainer"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["NetworkRouter"]
 
 [observability.logs]
 enabled = true
