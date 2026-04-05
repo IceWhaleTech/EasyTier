@@ -1,4 +1,5 @@
+node_modules
+.wrangler
+.dev.vars
 worker-configuration.d.ts
-.wrangler/
-.wrangler-build/
-.wrangler-build-*/
+npm-debug.log*

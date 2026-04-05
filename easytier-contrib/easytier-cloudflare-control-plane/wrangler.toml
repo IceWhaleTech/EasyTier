@@ -1,60 +1,28 @@
-name = "easytier-control-plane"
+name = "easytier"
 main = "src/index.ts"
-account_id = "09a207f03f6818f4ab62111b20a34941"
-compatibility_date = "2026-03-29"
-compatibility_flags = ["nodejs_compat"]
-minify = true
-workers_dev = false
+compatibility_date = "2026-04-05"
 
-[vars]
-CF_CONTAINERS_ACCOUNT_ID = "09a207f03f6818f4ab62111b20a34941"
-CF_EASYTIER_CONTAINER_APP_ID = "a030cea1-98bc-4639-b366-4eb49f16050a"
 [placement]
 mode = "smart"
 
-[triggers]
-crons = ["*/5 * * * *"]
+[[containers]]
+class_name = "MyContainer"
+image = "docker.io/easytier/easytier:v2.5.0"
+instance_type = "basic"
+max_instances = 1
 
 [[durable_objects.bindings]]
 name = "EASYTIER_CONTAINER"
-class_name = "EasyTierContainer"
-
-[[durable_objects.bindings]]
-name = "NETWORK_ROUTER"
-class_name = "NetworkRouter"
-
-[[durable_objects.bindings]]
-name = "INSTANCE_CATALOG"
-class_name = "InstanceCatalog"
+class_name = "MyContainer"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["EasyTierContainer"]
-
-[[migrations]]
-tag = "v2"
-new_sqlite_classes = ["NetworkRegistry"]
-
-[[migrations]]
-tag = "v3"
-deleted_classes = ["NetworkRegistry"]
-
-[[migrations]]
-tag = "v4"
-new_sqlite_classes = ["NetworkRouter"]
-
-[[migrations]]
-tag = "v5"
-new_sqlite_classes = ["InstanceCatalog"]
-
-[[containers]]
-class_name = "EasyTierContainer"
-image = "./Dockerfile"
-instance_type = "basic"
+new_sqlite_classes = ["MyContainer"]
 
 [observability.logs]
 enabled = true
 
 [[routes]]
 pattern = "et.icewhale.io"
+zone_name = "icewhale.io"
 custom_domain = true

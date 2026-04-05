@@ -1,7 +1,7 @@
 import {
   DEFAULT_INSTANCE,
+  DEFAULT_RPC_PORTAL,
   DEFAULT_WS_LISTENER,
-  SHARED_RELAY_NETWORK_NAME,
 } from "./constants";
 import type { InstanceConfig } from "./types";
 
@@ -26,13 +26,14 @@ export function normalizeConfig(input: InstanceConfig): InstanceConfig {
     hostname: input.hostname?.trim() || undefined,
     networkName: input.networkName?.trim() || "",
     networkSecret: input.networkSecret ?? "",
+    ipv4: input.ipv4?.trim() || undefined,
     peers: (input.peers ?? []).map((item) => item.trim()).filter(Boolean),
     listeners,
     extraArgs: (input.extraArgs ?? [])
       .map((item) => item.trim())
       .filter(Boolean),
     noTun: input.noTun ?? true,
-    rpcPortal: input.rpcPortal?.trim() || undefined,
+    rpcPortal: input.rpcPortal?.trim() || DEFAULT_RPC_PORTAL,
     env: Object.fromEntries(
       Object.entries(input.env ?? {}).filter(
         ([, value]) => value !== undefined,
@@ -43,6 +44,14 @@ export function normalizeConfig(input: InstanceConfig): InstanceConfig {
 
 export function buildEasyTierArgs(config: InstanceConfig): string[] {
   const args: string[] = [];
+
+  if (config.hostname) {
+    args.push("--hostname", config.hostname);
+  }
+
+  if (config.ipv4) {
+    args.push("--ipv4", config.ipv4);
+  }
 
   args.push("--network-name", config.networkName ?? "");
   args.push("--network-secret", config.networkSecret ?? "");
@@ -60,7 +69,7 @@ export function buildEasyTierArgs(config: InstanceConfig): string[] {
   }
 
   for (const peer of config.peers ?? []) {
-    args.push("--peer", peer);
+    args.push("-p", peer);
   }
 
   args.push(...(config.extraArgs ?? []));
@@ -86,6 +95,36 @@ export function parseInstanceConfig(value: unknown): InstanceConfig {
     return raw;
   };
 
+  const parseOptionalString = (key: string): string | undefined => {
+    const raw = record[key];
+    if (raw === undefined) {
+      return undefined;
+    }
+    if (typeof raw !== "string") {
+      throw new RequestError(400, `${key} must be a string`);
+    }
+    return raw;
+  };
+
+  const parseRequiredString = (key: string): string => {
+    const value = parseOptionalString(key);
+    if (!value?.trim()) {
+      throw new RequestError(400, `${key} is required`);
+    }
+    return value;
+  };
+
+  const parseOptionalBoolean = (key: string): boolean | undefined => {
+    const raw = record[key];
+    if (raw === undefined) {
+      return undefined;
+    }
+    if (typeof raw !== "boolean") {
+      throw new RequestError(400, `${key} must be a boolean`);
+    }
+    return raw;
+  };
+
   const env = record.env;
   if (
     env !== undefined &&
@@ -97,38 +136,17 @@ export function parseInstanceConfig(value: unknown): InstanceConfig {
     throw new RequestError(400, "env must be an object of string values");
   }
 
-  const booleanOrUndefined = (key: string): boolean | undefined => {
-    const raw = record[key];
-    if (raw === undefined) {
-      return undefined;
-    }
-    if (typeof raw !== "boolean") {
-      throw new RequestError(400, `${key} must be a boolean`);
-    }
-    return raw;
-  };
-
-  const stringOrUndefined = (key: string): string | undefined => {
-    const raw = record[key];
-    if (raw === undefined) {
-      return undefined;
-    }
-    if (typeof raw !== "string") {
-      throw new RequestError(400, `${key} must be a string`);
-    }
-    return raw;
-  };
-
   return normalizeConfig({
-    instanceName: stringOrUndefined("instanceName"),
-    hostname: stringOrUndefined("hostname"),
-    networkName: stringOrUndefined("networkName"),
-    networkSecret: stringOrUndefined("networkSecret"),
+    instanceName: parseOptionalString("instanceName"),
+    hostname: parseOptionalString("hostname"),
+    networkName: parseRequiredString("networkName"),
+    networkSecret: parseRequiredString("networkSecret"),
+    ipv4: parseOptionalString("ipv4"),
     peers: parseStringArray("peers"),
     listeners: parseStringArray("listeners"),
     extraArgs: parseStringArray("extraArgs"),
-    noTun: booleanOrUndefined("noTun"),
-    rpcPortal: stringOrUndefined("rpcPortal"),
+    noTun: parseOptionalBoolean("noTun"),
+    rpcPortal: parseOptionalString("rpcPortal"),
     env: (env as Record<string, string> | undefined) ?? undefined,
   });
 }
@@ -136,23 +154,12 @@ export function parseInstanceConfig(value: unknown): InstanceConfig {
 export function formatConfigExample(): InstanceConfig {
   return {
     instanceName: DEFAULT_INSTANCE,
-    networkName: "example-network",
-    networkSecret: "example-secret",
+    networkName: "stage1-demo",
+    networkSecret: "stage1-demo",
     noTun: true,
+    rpcPortal: DEFAULT_RPC_PORTAL,
     peers: [],
     listeners: [DEFAULT_WS_LISTENER],
     extraArgs: [],
   };
-}
-
-export function buildSharedRelayConfig(instanceName: string): InstanceConfig {
-  return normalizeConfig({
-    instanceName,
-    networkName: SHARED_RELAY_NETWORK_NAME,
-    networkSecret: "",
-    noTun: true,
-    listeners: [DEFAULT_WS_LISTENER],
-    peers: [],
-    extraArgs: [],
-  });
 }

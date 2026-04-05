@@ -5,19 +5,15 @@
   "type": "module",
   "scripts": {
     "cf-typegen": "wrangler types",
-    "postinstall": "wrangler types",
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --port 8787",
     "deploy": "wrangler deploy",
-    "lint": "wrangler types && tsc --noEmit",
-    "check": "npm run lint",
-    "sync:instances": "node ./scripts/sync-container-instances.mjs"
+    "check": "wrangler types && tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.2.0",
-    "hono": "^4.12.9"
+    "@cloudflare/containers": "^0.2.0"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^24.3.0",
     "typescript": "^6.0.2",
     "wrangler": "^4.78.0"
   }

@@ -8,7 +8,7 @@
     "isolatedModules": true,
     "lib": ["ES2022", "WebWorker"],
     "types": ["node"],
-    "skipLibCheck": true,
+    "skipLibCheck": true
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts"],
+  "include": ["worker-configuration.d.ts", "src/**/*.ts"]
 }
