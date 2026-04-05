@@ -10,7 +10,8 @@
     "check": "wrangler types && tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.2.0"
+    "@cloudflare/containers": "^0.2.0",
+    "hono": "^4.12.10"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

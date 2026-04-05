@@ -2,7 +2,13 @@ import { Container } from "@cloudflare/containers";
 
 import { buildEasyTierArgs, parseInstanceConfig, RequestError } from "./config";
 import { INTERNAL_WS_PORT } from "./constants";
-import type { InstanceConfig, StoredState } from "./types";
+import type {
+  ConfigRecord,
+  ErrorLike,
+  InstanceConfig,
+  StoredState,
+  WebSocketData,
+} from "./types/index";
 
 export class EasyTierContainer extends Container {
   defaultPort = INTERNAL_WS_PORT;
@@ -16,7 +22,9 @@ export class EasyTierContainer extends Container {
       const route = `${request.method} ${url.pathname}`;
 
       if (route === "PUT /control/config") {
-        const config = parseInstanceConfig(await request.json());
+        const config = parseInstanceConfig(
+          (await request.json()) as ConfigRecord,
+        );
         await this.ctx.storage.put("config", config);
         await this.ctx.storage.put("updatedAt", new Date().toISOString());
         return Response.json({ ok: true, config });
@@ -67,7 +75,7 @@ export class EasyTierContainer extends Container {
 
       return super.fetch(request);
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error as ErrorLike);
     }
   }
 
@@ -210,7 +218,7 @@ export class EasyTierContainer extends Container {
 
 export class MyContainer extends EasyTierContainer {}
 
-function toErrorResponse(error: unknown): Response {
+function toErrorResponse(error: ErrorLike): Response {
   const status = error instanceof RequestError ? error.status : 500;
   const message = error instanceof Error ? error.message : String(error);
 
@@ -232,7 +240,7 @@ function isWebSocketRequest(request: Request): boolean {
 
 async function forwardMessage(
   target: WebSocket,
-  data: unknown,
+  data: WebSocketData,
   peer: WebSocket,
 ): Promise<void> {
   try {
@@ -271,21 +279,8 @@ function setBinaryType(socket: WebSocket): void {
   }
 }
 
-function isBlobLike(
-  value: unknown,
-): value is Blob | { arrayBuffer(): Promise<ArrayBuffer> } {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  if (value instanceof Blob) {
-    return true;
-  }
-
-  return (
-    "arrayBuffer" in value &&
-    typeof (value as { arrayBuffer?: unknown }).arrayBuffer === "function"
-  );
+function isBlobLike(value: WebSocketData): value is Blob {
+  return value instanceof Blob;
 }
 
 function normalizeCloseCode(code: number): number {

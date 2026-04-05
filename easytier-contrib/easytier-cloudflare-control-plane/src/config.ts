@@ -3,7 +3,7 @@ import {
   DEFAULT_RPC_PORTAL,
   DEFAULT_WS_LISTENER,
 } from "./constants";
-import type { InstanceConfig } from "./types";
+import type { ConfigRecord, InstanceConfig, JsonValue } from "./types/index";
 
 export class RequestError extends Error {
   constructor(
@@ -16,10 +16,9 @@ export class RequestError extends Error {
 }
 
 export function normalizeConfig(input: InstanceConfig): InstanceConfig {
-  const listeners =
-    input.listeners && input.listeners.length > 0
-      ? [...new Set(input.listeners.map((item) => item.trim()).filter(Boolean))]
-      : [DEFAULT_WS_LISTENER];
+  const listeners = input.listeners && input.listeners.length > 0
+    ? [...new Set(input.listeners.map((item) => item.trim()).filter(Boolean))]
+    : [DEFAULT_WS_LISTENER];
 
   return {
     instanceName: input.instanceName?.trim() || DEFAULT_INSTANCE,
@@ -44,55 +43,43 @@ export function normalizeConfig(input: InstanceConfig): InstanceConfig {
 
 export function buildEasyTierArgs(config: InstanceConfig): string[] {
   const args: string[] = [];
-
   if (config.hostname) {
     args.push("--hostname", config.hostname);
   }
-
   if (config.ipv4) {
     args.push("--ipv4", config.ipv4);
   }
-
   args.push("--network-name", config.networkName ?? "");
   args.push("--network-secret", config.networkSecret ?? "");
-
   if (config.noTun ?? true) {
     args.push("--no-tun");
   }
-
   if (config.rpcPortal) {
     args.push("--rpc-portal", config.rpcPortal);
   }
-
   for (const listener of config.listeners ?? []) {
     args.push("--listeners", listener);
   }
-
   for (const peer of config.peers ?? []) {
     args.push("-p", peer);
   }
-
   args.push(...(config.extraArgs ?? []));
-
   return args;
 }
 
-export function parseInstanceConfig(value: unknown): InstanceConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new RequestError(400, "request body must be a JSON object");
-  }
-
-  const record = value as Record<string, unknown>;
-
-  const parseStringArray = (key: string): string[] | undefined => {
+export function parseInstanceConfig(record: ConfigRecord): InstanceConfig {
+  const parseStringArray = (key: string): string[] => {
     const raw = record[key];
     if (raw === undefined) {
-      return undefined;
+      return [];
     }
-    if (!Array.isArray(raw) || raw.some((item) => typeof item !== "string")) {
+    if (
+      !Array.isArray(raw) ||
+      raw.some((item: JsonValue) => typeof item !== "string")
+    ) {
       throw new RequestError(400, `${key} must be an array of strings`);
     }
-    return raw;
+    return raw as string[];
   };
 
   const parseOptionalString = (key: string): string | undefined => {
@@ -128,10 +115,8 @@ export function parseInstanceConfig(value: unknown): InstanceConfig {
   const env = record.env;
   if (
     env !== undefined &&
-    (typeof env !== "object" ||
-      env === null ||
-      Array.isArray(env) ||
-      Object.values(env).some((item) => typeof item !== "string"))
+    (typeof env !== "object" || env === null || Array.isArray(env) ||
+    Object.values(env).some((item: JsonValue) => typeof item !== "string"))
   ) {
     throw new RequestError(400, "env must be an object of string values");
   }

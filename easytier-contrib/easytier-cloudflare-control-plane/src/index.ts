@@ -1,4 +1,5 @@
 import { formatConfigExample, RequestError } from "./config";
+import type { ErrorLike } from "./types/index";
 import { DEFAULT_INSTANCE } from "./constants";
 import { EasyTierContainer, MyContainer } from "./easytier-container";
 
@@ -11,7 +12,7 @@ export default {
     try {
       return await routeRequest(request, env, executionCtx);
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error as ErrorLike);
     }
   },
 } satisfies ExportedHandler<WorkerEnv>;
@@ -232,7 +233,7 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function toErrorResponse(error: unknown): Response {
+function toErrorResponse(error: ErrorLike): Response {
   const status = error instanceof RequestError ? error.status : 500;
   const message = error instanceof Error ? error.message : String(error);
 
