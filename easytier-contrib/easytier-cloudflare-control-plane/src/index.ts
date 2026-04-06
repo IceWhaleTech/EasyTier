@@ -9,6 +9,7 @@ import {
   extractNetworkRouteIdentityFromFrame,
   type Frame,
 } from "./easytier-proto";
+import { generateNetworkSecretDigestHex } from "./network-secret-digest";
 import { NetworkRouter } from "./network-router";
 import type {
   ErrorLike,
@@ -57,6 +58,10 @@ async function routeRequest(
 
   if (request.method === "GET" && url.pathname === "/api/config-example") {
     return Response.json(formatConfigExample());
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/network-route") {
+    return lookupNetworkRoute(env, url.searchParams);
   }
 
   if (request.method === "GET" && url.pathname === "/api/instance") {
@@ -161,6 +166,7 @@ function landingPage(request: Request): Response {
         <ul>
           <li><code>GET /healthz</code></li>
           <li><code>GET /api/config-example</code></li>
+          <li><code>GET /api/network-route?networkName=stage1-demo</code></li>
           <li><code>GET /api/instance</code></li>
           <li><code>PUT /api/instance</code></li>
           <li><code>POST /api/instance/start</code></li>
@@ -487,6 +493,50 @@ function sendControlRequest(
   );
 }
 
+async function lookupNetworkRoute(
+  env: WorkerEnv,
+  searchParams: URLSearchParams,
+): Promise<Response> {
+  const networkName = searchParams.get("networkName")?.trim() ?? "";
+  const secretDigestHex = resolveLookupSecretDigestHex(
+    networkName,
+    searchParams,
+  );
+  const networkSecret = normalizeQueryString(
+    searchParams.get("networkSecret"),
+  );
+
+  if (!networkName) {
+    throw new RequestError(400, "networkName is required");
+  }
+
+  const routeKey = buildLookupRouteKey(networkName, secretDigestHex);
+  const response = await env.NETWORK_ROUTER.getByName(routeKey).fetch(
+    new Request(buildInternalUrl("/route"), { method: "GET" }),
+  );
+
+  if (!response.ok) {
+    const data = (await response.json()) as { error?: string };
+    throw new RequestError(
+      response.status,
+      data.error
+        ? `${data.error} for routeKey ${routeKey}`
+        : `route lookup failed for routeKey ${routeKey}`,
+    );
+  }
+
+  const route = (await response.json()) as NetworkRouteRecord;
+  const assignedRegionDetail = describeLocationHint(route.locationHint);
+  return Response.json({
+    ...route,
+    lookupMode: secretDigestHex ? "digest" : "network-name-only",
+    assignedRegion: route.locationHint,
+    assignedRegionName: assignedRegionDetail.name,
+    assignedRegionPrecision: "region",
+    derivedFromNetworkSecret: networkSecret !== null,
+  });
+}
+
 function sendContainerControlRequest(
   env: WorkerEnv,
   instanceName: string,
@@ -598,6 +648,114 @@ function escapeHtml(value: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function buildLookupRouteKey(
+  networkName: string,
+  secretDigestHex: string | null,
+): string {
+  return secretDigestHex
+    ? `digest:${networkName}:${secretDigestHex}`
+    : `network:${networkName}`;
+}
+
+function resolveLookupSecretDigestHex(
+  networkName: string,
+  searchParams: URLSearchParams,
+): string | null {
+  const explicitSecretDigestHex = normalizeSecretDigestHex(
+    searchParams.get("secretDigestHex"),
+  );
+  const networkSecret = normalizeQueryString(searchParams.get("networkSecret"));
+
+  if (networkSecret === null) {
+    return explicitSecretDigestHex;
+  }
+
+  if (!networkName) {
+    throw new RequestError(400, "networkName is required");
+  }
+
+  const derivedSecretDigestHex = generateNetworkSecretDigestHex(
+    networkName,
+    networkSecret,
+  );
+
+  if (
+    explicitSecretDigestHex !== null &&
+    explicitSecretDigestHex !== derivedSecretDigestHex
+  ) {
+    throw new RequestError(
+      400,
+      "secretDigestHex does not match the digest derived from networkSecret",
+    );
+  }
+
+  return derivedSecretDigestHex;
+}
+
+function normalizeSecretDigestHex(
+  value: string | null,
+): string | null {
+  const normalized = normalizeQueryString(value)?.toLowerCase() ?? "";
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (!/^[0-9a-f]+$/.test(normalized)) {
+    throw new RequestError(400, "secretDigestHex must be a hex string");
+  }
+
+  return normalized;
+}
+
+function normalizeQueryString(value: string | null): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized ? normalized : null;
+}
+
+function describeLocationHint(locationHint: DurableObjectLocationHint): {
+  name: string;
+} {
+  switch (locationHint) {
+    case "wnam":
+      return {
+        name: "Western North America",
+      };
+    case "enam":
+      return {
+        name: "Eastern North America",
+      };
+    case "sam":
+      return {
+        name: "South America",
+      };
+    case "weur":
+      return {
+        name: "Western Europe",
+      };
+    case "eeur":
+      return {
+        name: "Eastern Europe",
+      };
+    case "apac":
+      return {
+        name: "Asia-Pacific",
+      };
+    case "oc":
+      return {
+        name: "Oceania",
+      };
+    case "afr":
+      return {
+        name: "Africa",
+      };
+    case "me":
+      return {
+        name: "Middle East",
+      };
+  }
 }
 
 function toErrorResponse(error: ErrorLike): Response {

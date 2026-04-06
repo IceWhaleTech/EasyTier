@@ -69,8 +69,19 @@ export class NetworkRouter extends DurableObject {
     };
 
     if (existing) {
-      await this.ctx.storage.put(ROUTE_KEY, desiredRoute);
-      return { ...desiredRoute, created: false };
+      const stickyRoute: NetworkRouteRecord = {
+        networkName,
+        routeKey,
+        routeMode: body.routeMode,
+        secretDigestHex: body.secretDigestHex ?? null,
+        instanceName: existing.instanceName,
+        locationHint: existing.locationHint,
+        createdAt: existing.createdAt,
+        lastResolvedAt: new Date().toISOString(),
+      };
+
+      await this.ctx.storage.put(ROUTE_KEY, stickyRoute);
+      return { ...stickyRoute, created: false };
     }
 
     await this.ctx.storage.put(ROUTE_KEY, desiredRoute);

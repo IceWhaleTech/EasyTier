@@ -17,6 +17,7 @@
   - Worker 入口
   - `GET /healthz`
   - `GET /api/config-example`
+  - `GET /api/network-route`
   - `GET/PUT/DELETE /api/instance`
   - `POST /api/instance/start`
   - `POST /api/instance/stop`
@@ -80,6 +81,45 @@ curl -X POST http://127.0.0.1:8787/api/instance/start
 ```bash
 curl http://127.0.0.1:8787/api/instance
 ```
+
+## 查询 networkName 当前分配地区
+
+如果你需要知道某个 `networkName` 当前已经被分配到了哪个地区，可以查询:
+
+```bash
+curl "http://127.0.0.1:8787/api/network-route?networkName=stage1-demo"
+```
+
+返回里会包含:
+
+- `assignedRegion`: 当前分配到的地区代码，等同于内部的 `locationHint`
+- `instanceName`: 当前命中的共享入口实例
+- `routeMode`: 实际持久化使用的路由模式
+- `lookupMode`: 本次查询使用的查找模式
+
+如果你手里只有 `networkSecret` 原文，可以让服务端代算 digest，再查同一条精确路由。对包含 `?`、`&` 之类特殊字符的 secret，推荐用 `--data-urlencode`:
+
+```bash
+curl -G "http://127.0.0.1:8787/api/network-route" \
+  --data-urlencode "networkName=stage1-demo" \
+  --data-urlencode "networkSecret=stage1-demo"
+```
+
+如果你已经拿到了握手里的 `secretDigestHex`，也可以直接查:
+
+```bash
+curl -G "http://127.0.0.1:8787/api/network-route" \
+  --data-urlencode "networkName=stage1-demo" \
+  --data-urlencode "secretDigestHex=<hex>"
+```
+
+说明:
+
+- 不带 `secretDigestHex` 时，查询的是 `network:${networkName}` 这条 `network-name-only` 路由。
+- 带 `networkSecret` 时，服务端会先按 EasyTier 的算法计算 `secretDigestHex`，再查询 `digest:${networkName}:${secretDigestHex}`。
+- 带 `secretDigestHex` 时，查询的是 `digest:${networkName}:${secretDigestHex}` 这条精确路由。
+- 如果同时传了 `networkSecret` 和 `secretDigestHex`，接口会校验两者是否一致。
+- 如果对应路由还没被首次握手创建，接口会返回 `404`。
 
 ## 客户端验证
 
