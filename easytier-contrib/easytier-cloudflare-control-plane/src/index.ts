@@ -3,6 +3,7 @@ import {
   formatConfigExample,
   RequestError,
 } from "./config";
+import { Hono } from "hono";
 import { DEFAULT_INSTANCE, INITIAL_MESSAGE_TIMEOUT_MS } from "./constants";
 import { EasyTierContainer, MyContainer } from "./easytier-container";
 import {
@@ -18,80 +19,64 @@ import type {
 } from "./types/index";
 
 type WorkerEnv = Cloudflare.Env;
+type AppEnv = { Bindings: WorkerEnv };
+type WaitUntilExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
 
 export { EasyTierContainer, MyContainer, NetworkRouter };
+const app = createApp();
 
 export default {
-  async fetch(request, env, executionCtx) {
-    try {
-      return await routeRequest(request, env, executionCtx);
-    } catch (error) {
-      return toErrorResponse(error as ErrorLike);
-    }
+  fetch(request, env, executionCtx) {
+    return app.fetch(request, env, executionCtx);
   },
 } satisfies ExportedHandler<WorkerEnv>;
 
-async function routeRequest(
-  request: Request,
-  env: WorkerEnv,
-  executionCtx: ExecutionContext,
-): Promise<Response> {
-  const url = new URL(request.url);
+function createApp(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
 
-  if (
-    isWebSocketRequest(request) &&
-    (url.pathname === "/" || url.pathname === "/connect")
-  ) {
-    return acceptRoutedWebSocket(request, env, executionCtx);
-  }
+  app.onError((error) => toErrorResponse(error as ErrorLike));
+  app.notFound(() => Response.json({ error: "route not found" }, { status: 404 }));
 
-  if (
-    request.method === "GET" &&
-    url.pathname === "/"
-  ) {
-    return landingPage(request);
-  }
+  app.use("*", async (c, next) => {
+    const pathname = new URL(c.req.url).pathname;
+    if (
+      isWebSocketRequest(c.req.raw) &&
+      (pathname === "/" || pathname === "/connect")
+    ) {
+      return acceptRoutedWebSocket(c.req.raw, c.env, c.executionCtx);
+    }
 
-  if (request.method === "GET" && url.pathname === "/healthz") {
-    return Response.json({ ok: true });
-  }
+    await next();
+  });
 
-  if (request.method === "GET" && url.pathname === "/api/config-example") {
-    return Response.json(formatConfigExample());
-  }
+  app.get("/", (c) => landingPage(c.req.raw));
+  app.get("/healthz", (c) => c.json({ ok: true }));
+  app.get("/api/config-example", (c) => c.json(formatConfigExample()));
+  app.get("/api/network-route", (c) =>
+    lookupNetworkRoute(c.env, new URL(c.req.url).searchParams),
+  );
+  app.get("/api/instance", (c) =>
+    sendControlRequest(c.env, "/control/status", "GET"),
+  );
+  app.put("/api/instance", (c) =>
+    proxyToContainer(c.env, c.req.raw, "/control/config"),
+  );
+  app.delete("/api/instance", (c) =>
+    sendControlRequest(c.env, "/control/config", "DELETE"),
+  );
+  app.post("/api/instance/start", (c) =>
+    sendControlRequest(c.env, "/control/start", "POST"),
+  );
+  app.post("/api/instance/stop", (c) =>
+    sendControlRequest(c.env, "/control/stop", "POST"),
+  );
+  app.get("/connect", (c) =>
+    c.json({ error: "websocket upgrade required" }, 426),
+  );
 
-  if (request.method === "GET" && url.pathname === "/api/network-route") {
-    return lookupNetworkRoute(env, url.searchParams);
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/instance") {
-    return sendControlRequest(env, "/control/status", "GET");
-  }
-
-  if (request.method === "PUT" && url.pathname === "/api/instance") {
-    return proxyToContainer(env, request, "/control/config");
-  }
-
-  if (request.method === "DELETE" && url.pathname === "/api/instance") {
-    return sendControlRequest(env, "/control/config", "DELETE");
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/instance/start") {
-    return sendControlRequest(env, "/control/start", "POST");
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/instance/stop") {
-    return sendControlRequest(env, "/control/stop", "POST");
-  }
-
-  if (request.method === "GET" && url.pathname === "/connect") {
-    return Response.json(
-      { error: "websocket upgrade required" },
-      { status: 426 },
-    );
-  }
-
-  return Response.json({ error: "route not found" }, { status: 404 });
+  return app;
 }
 
 function landingPage(request: Request): Response {
@@ -203,7 +188,7 @@ function landingPage(request: Request): Response {
 function acceptRoutedWebSocket(
   request: Request,
   env: WorkerEnv,
-  executionCtx: ExecutionContext,
+  executionCtx: WaitUntilExecutionContext,
 ): Response {
   const pair = new WebSocketPair();
   const clientSocket = pair[0];
@@ -497,6 +482,7 @@ async function lookupNetworkRoute(
   env: WorkerEnv,
   searchParams: URLSearchParams,
 ): Promise<Response> {
+  const lookupStartedAt = Date.now();
   const networkName = searchParams.get("networkName")?.trim() ?? "";
   const secretDigestHex = resolveLookupSecretDigestHex(
     networkName,
@@ -527,9 +513,11 @@ async function lookupNetworkRoute(
 
   const route = (await response.json()) as NetworkRouteRecord;
   const assignedRegionDetail = describeLocationHint(route.locationHint);
+  const lookupLatencyMs = Date.now() - lookupStartedAt;
   return Response.json({
     ...route,
     lookupMode: secretDigestHex ? "digest" : "network-name-only",
+    lookupLatencyMs,
     assignedRegion: route.locationHint,
     assignedRegionName: assignedRegionDetail.name,
     assignedRegionPrecision: "region",

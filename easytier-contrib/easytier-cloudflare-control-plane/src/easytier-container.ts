@@ -1,4 +1,5 @@
 import { Container } from "@cloudflare/containers";
+import { Hono } from "hono";
 
 import { buildEasyTierArgs, parseInstanceConfig, RequestError } from "./config";
 import { INTERNAL_WS_PORT } from "./constants";
@@ -15,59 +16,12 @@ export class EasyTierContainer extends Container {
   requiredPorts = [INTERNAL_WS_PORT];
   sleepAfter = "10m";
   enableInternet = false;
+  private readonly controlApp = this.createControlApp();
 
   override async fetch(request: Request): Promise<Response> {
     try {
-      const url = new URL(request.url);
-      const route = `${request.method} ${url.pathname}`;
-
-      if (route === "PUT /control/config") {
-        const config = parseInstanceConfig(
-          (await request.json()) as ConfigRecord,
-        );
-        const previousConfig = await this.ctx.storage.get<InstanceConfig>("config");
-        await this.ctx.storage.put("config", config);
-        await this.ctx.storage.put("updatedAt", new Date().toISOString());
-        if (JSON.stringify(previousConfig ?? null) !== JSON.stringify(config)) {
-          await this.stopInstance();
-        }
-        return Response.json({ ok: true, config });
-      }
-
-      if (route === "DELETE /control/config") {
-        await this.stopInstance();
-        await this.ctx.storage.delete("config");
-        await this.ctx.storage.put("updatedAt", new Date().toISOString());
-        return Response.json({ ok: true });
-      }
-
-      if (route === "POST /control/observed-handshake") {
-        const payload = (await request.json()) as { networkName?: string };
-        if (!payload.networkName) {
-          throw new RequestError(400, "networkName is required");
-        }
-        const now = new Date().toISOString();
-        await this.ctx.storage.put("lastHandshakeAt", now);
-        await this.ctx.storage.put(
-          "lastHandshakeNetworkName",
-          payload.networkName,
-        );
-        return Response.json({ ok: true, observedAt: now });
-      }
-
-      if (route === "GET /control/status") {
-        return Response.json(await this.readState());
-      }
-
-      if (route === "POST /control/start") {
-        const config = await this.requireConfig();
-        await this.ensureStarted(config);
-        return Response.json(await this.readState());
-      }
-
-      if (route === "POST /control/stop") {
-        await this.stopInstance();
-        return Response.json(await this.readState());
+      if (isControlRequest(request)) {
+        return this.controlApp.fetch(request);
       }
 
       const config = await this.requireConfig();
@@ -79,6 +33,75 @@ export class EasyTierContainer extends Container {
     } catch (error) {
       return toErrorResponse(error as ErrorLike);
     }
+  }
+
+  private createControlApp(): Hono {
+    const app = new Hono();
+
+    app.onError((error) => toErrorResponse(error as ErrorLike));
+    app.notFound(() =>
+      Response.json({ error: "route not found" }, { status: 404 }),
+    );
+
+    app.put("/control/config", (c) => this.handleConfigUpdate(c.req.raw));
+    app.delete("/control/config", () => this.handleConfigDelete());
+    app.post("/control/observed-handshake", (c) =>
+      this.handleObservedHandshake(c.req.raw),
+    );
+    app.get("/control/status", () => this.handleStatus());
+    app.post("/control/start", () => this.handleStart());
+    app.post("/control/stop", () => this.handleStop());
+
+    return app;
+  }
+
+  private async handleConfigUpdate(request: Request): Promise<Response> {
+    const config = parseInstanceConfig(
+      (await request.json()) as ConfigRecord,
+    );
+    const previousConfig = await this.ctx.storage.get<InstanceConfig>("config");
+    await this.ctx.storage.put("config", config);
+    await this.ctx.storage.put("updatedAt", new Date().toISOString());
+    if (JSON.stringify(previousConfig ?? null) !== JSON.stringify(config)) {
+      await this.stopInstance();
+    }
+    return Response.json({ ok: true, config });
+  }
+
+  private async handleConfigDelete(): Promise<Response> {
+    await this.stopInstance();
+    await this.ctx.storage.delete("config");
+    await this.ctx.storage.put("updatedAt", new Date().toISOString());
+    return Response.json({ ok: true });
+  }
+
+  private async handleObservedHandshake(request: Request): Promise<Response> {
+    const payload = (await request.json()) as { networkName?: string };
+    if (!payload.networkName) {
+      throw new RequestError(400, "networkName is required");
+    }
+    const now = new Date().toISOString();
+    await this.ctx.storage.put("lastHandshakeAt", now);
+    await this.ctx.storage.put(
+      "lastHandshakeNetworkName",
+      payload.networkName,
+    );
+    return Response.json({ ok: true, observedAt: now });
+  }
+
+  private async handleStatus(): Promise<Response> {
+    return Response.json(await this.readState());
+  }
+
+  private async handleStart(): Promise<Response> {
+    const config = await this.requireConfig();
+    await this.ensureStarted(config);
+    return Response.json(await this.readState());
+  }
+
+  private async handleStop(): Promise<Response> {
+    await this.stopInstance();
+    return Response.json(await this.readState());
   }
 
   private async proxyWebSocketRequest(request: Request): Promise<Response> {
@@ -219,6 +242,10 @@ export class EasyTierContainer extends Container {
 }
 
 export class MyContainer extends EasyTierContainer {}
+
+function isControlRequest(request: Request): boolean {
+  return new URL(request.url).pathname.startsWith("/control/");
+}
 
 function isWebSocketRequest(request: Request): boolean {
   return request.headers.get("Upgrade")?.toLowerCase() === "websocket";
