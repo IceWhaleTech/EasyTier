@@ -16,11 +16,7 @@
 - `src/index.ts`
   - Worker 入口
   - `GET /healthz`
-  - `GET /api/config-example`
   - `GET /api/network-route`
-  - `GET/PUT/DELETE /api/instance`
-  - `POST /api/instance/start`
-  - `POST /api/instance/stop`
   - `WS /connect`
   - WebSocket upgrade 直接透传到 Container
 - `src/easytier-container.ts`
@@ -52,36 +48,6 @@ mode = "smart"
 
 Cloudflare 官方文档说明 Smart Placement 只影响 `fetch` handler，并且在部署后最多可能需要大约 15 分钟完成分析并开始稳定按更优位置调度。
 
-## 配置一个共享节点实例
-
-先写入容器配置:
-
-```bash
-curl -X PUT http://127.0.0.1:8787/api/instance \
-  -H 'content-type: application/json' \
-  -d '{
-    "networkName": "stage1-demo",
-    "networkSecret": "stage1-demo",
-    "noTun": true,
-    "rpcPortal": "127.0.0.1:15888",
-    "listeners": ["ws://0.0.0.0:11011/"],
-    "peers": [],
-    "extraArgs": []
-  }'
-```
-
-然后手动启动容器内的 `easytier-core`:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/instance/start
-```
-
-查看状态:
-
-```bash
-curl http://127.0.0.1:8787/api/instance
-```
-
 ## 查询 networkName 当前分配地区
 
 如果你需要知道某个 `networkName` 当前已经被分配到了哪个地区，可以查询:
@@ -96,6 +62,7 @@ curl "http://127.0.0.1:8787/api/network-route?networkName=stage1-demo"
 - `instanceName`: 当前命中的共享入口实例
 - `routeMode`: 实际持久化使用的路由模式
 - `lookupMode`: 本次查询使用的查找模式
+- `lookupLatencyMs`: 本次 Worker 查询路由记录的耗时，单位毫秒
 
 如果你手里只有 `networkSecret` 原文，可以让服务端代算 digest，再查同一条精确路由。对包含 `?`、`&` 之类特殊字符的 secret，推荐用 `--data-urlencode`:
 

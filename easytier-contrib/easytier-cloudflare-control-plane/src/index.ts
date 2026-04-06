@@ -1,11 +1,10 @@
 import {
   buildSharedRelayConfig,
-  formatConfigExample,
   RequestError,
 } from "./config";
 import { Hono } from "hono";
 import { DEFAULT_INSTANCE, INITIAL_MESSAGE_TIMEOUT_MS } from "./constants";
-import { EasyTierContainer, MyContainer } from "./easytier-container";
+import { EasyTierContainer } from "./easytier-container";
 import {
   extractNetworkRouteIdentityFromFrame,
   type Frame,
@@ -24,7 +23,7 @@ type WaitUntilExecutionContext = {
   waitUntil(promise: Promise<unknown>): void;
 };
 
-export { EasyTierContainer, MyContainer, NetworkRouter };
+export { EasyTierContainer, NetworkRouter };
 const app = createApp();
 
 export default {
@@ -53,24 +52,8 @@ function createApp(): Hono<AppEnv> {
 
   app.get("/", (c) => landingPage(c.req.raw));
   app.get("/healthz", (c) => c.json({ ok: true }));
-  app.get("/api/config-example", (c) => c.json(formatConfigExample()));
   app.get("/api/network-route", (c) =>
     lookupNetworkRoute(c.env, new URL(c.req.url).searchParams),
-  );
-  app.get("/api/instance", (c) =>
-    sendControlRequest(c.env, "/control/status", "GET"),
-  );
-  app.put("/api/instance", (c) =>
-    proxyToContainer(c.env, c.req.raw, "/control/config"),
-  );
-  app.delete("/api/instance", (c) =>
-    sendControlRequest(c.env, "/control/config", "DELETE"),
-  );
-  app.post("/api/instance/start", (c) =>
-    sendControlRequest(c.env, "/control/start", "POST"),
-  );
-  app.post("/api/instance/stop", (c) =>
-    sendControlRequest(c.env, "/control/stop", "POST"),
   );
   app.get("/connect", (c) =>
     c.json({ error: "websocket upgrade required" }, 426),
@@ -83,7 +66,6 @@ function landingPage(request: Request): Response {
   const url = new URL(request.url);
   const wsProtocol = url.protocol === "http:" ? "ws:" : "wss:";
   const websocketUrl = `${wsProtocol}//${url.host}`;
-  const configExample = JSON.stringify(formatConfigExample(), null, 2);
   const cliExample = [
     "cargo run -p easytier --bin easytier-core -- \\",
     "  --network-name stage1-demo \\",
@@ -150,24 +132,14 @@ function landingPage(request: Request): Response {
         <strong>Endpoints</strong>
         <ul>
           <li><code>GET /healthz</code></li>
-          <li><code>GET /api/config-example</code></li>
           <li><code>GET /api/network-route?networkName=stage1-demo</code></li>
-          <li><code>GET /api/instance</code></li>
-          <li><code>PUT /api/instance</code></li>
-          <li><code>POST /api/instance/start</code></li>
-          <li><code>POST /api/instance/stop</code></li>
-          <li><code>WS /</code></li>
+          <li><code>WS /</code> or <code>WS /connect</code></li>
         </ul>
       </div>
 
       <div class="card">
         <strong>WebSocket endpoint</strong>
         <pre><code>${escapeHtml(websocketUrl)}</code></pre>
-      </div>
-
-      <div class="card">
-        <strong>Example instance config</strong>
-        <pre><code>${escapeHtml(configExample)}</code></pre>
       </div>
 
       <div class="card">
@@ -456,26 +428,6 @@ function getRoutedContainerStub(
 
 function buildInternalUrl(pathname: string): string {
   return `https://internal${pathname}`;
-}
-
-function proxyToContainer(
-  env: WorkerEnv,
-  request: Request,
-  pathname: string,
-): Promise<Response> {
-  return getContainerStub(env).fetch(
-    new Request(buildInternalUrl(pathname), request),
-  );
-}
-
-function sendControlRequest(
-  env: WorkerEnv,
-  pathname: string,
-  method: "GET" | "POST" | "DELETE",
-): Promise<Response> {
-  return getContainerStub(env).fetch(
-    new Request(buildInternalUrl(pathname), { method }),
-  );
 }
 
 async function lookupNetworkRoute(

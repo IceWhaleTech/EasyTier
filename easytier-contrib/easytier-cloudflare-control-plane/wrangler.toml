@@ -6,14 +6,15 @@ compatibility_date = "2026-04-05"
 mode = "smart"
 
 [[containers]]
-class_name = "MyContainer"
+name = "easytier-mycontainer"
+class_name = "EasyTierContainer"
 image = "docker.io/easytier/easytier:v2.5.0"
 instance_type = "basic"
 max_instances = 100
 
 [[durable_objects.bindings]]
 name = "EASYTIER_CONTAINER"
-class_name = "MyContainer"
+class_name = "EasyTierContainer"
 
 [[durable_objects.bindings]]
 name = "NETWORK_ROUTER"
@@ -26,6 +27,12 @@ new_sqlite_classes = ["MyContainer"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["NetworkRouter"]
+
+[[migrations]]
+tag = "v3"
+renamed_classes = [
+  { from = "MyContainer", to = "EasyTierContainer" }
+]
 
 [observability.logs]
 enabled = true

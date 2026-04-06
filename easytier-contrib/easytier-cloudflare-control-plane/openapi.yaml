@@ -1,0 +1,213 @@
+openapi: 3.1.0
+info:
+  title: EasyTier Cloudflare Control Plane API
+  version: 0.1.0
+  summary: HTTP and WebSocket control plane for EasyTier running on Cloudflare Workers and Containers.
+  description: |
+    This API exposes control-plane operations for a shared EasyTier relay running on Cloudflare.
+
+    Notes:
+    - The WebSocket data plane accepts EasyTier binary frames on `/` and `/connect`.
+    - Route lookup is region-level only. `assignedRegion` maps to Cloudflare Durable Object location hints.
+    - `networkSecret` and `secretDigestHex` are alternative lookup inputs for `/api/network-route`.
+servers:
+  - url: https://et.icewhale.io
+    description: Production
+  - url: http://127.0.0.1:8787
+    description: Local development
+tags:
+  - name: Meta
+  - name: Routing
+  - name: WebSocket
+paths:
+  /:
+    get:
+      tags:
+        - Meta
+      summary: Get landing page
+      description: Returns the built-in HTML landing page with endpoint and client configuration examples.
+      responses:
+        "200":
+          description: HTML landing page
+          content:
+            text/html:
+              schema:
+                type: string
+  /healthz:
+    get:
+      tags:
+        - Meta
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Worker health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /connect:
+    get:
+      tags:
+        - WebSocket
+      summary: WebSocket endpoint hint
+      operationId: getConnectUpgradeHint
+      description: |
+        Non-upgrade HTTP requests receive a 426 response.
+
+        EasyTier WebSocket upgrades are accepted on both `/` and `/connect`.
+      x-websocket:
+        upgradePaths:
+          - /
+          - /connect
+      responses:
+        "426":
+          description: WebSocket upgrade required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/network-route:
+    get:
+      tags:
+        - Routing
+      summary: Look up the assigned region for a network
+      operationId: getNetworkRoute
+      description: |
+        Looks up the persisted route assignment for a network.
+
+        Lookup modes:
+        - `networkName` only: resolves the `network-name-only` route key.
+        - `networkName` + `networkSecret`: derives the EasyTier secret digest server-side and resolves the digest route key.
+        - `networkName` + `secretDigestHex`: resolves the digest route key directly.
+
+        If both `networkSecret` and `secretDigestHex` are provided, they must refer to the same digest.
+      parameters:
+        - name: networkName
+          in: query
+          required: true
+          description: EasyTier network name.
+          schema:
+            type: string
+            minLength: 1
+        - name: networkSecret
+          in: query
+          required: false
+          description: Raw EasyTier network secret used to derive the secret digest server-side.
+          schema:
+            type: string
+        - name: secretDigestHex
+          in: query
+          required: false
+          description: Precomputed EasyTier secret digest as a lowercase hex string.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]+$"
+      responses:
+        "200":
+          description: Persisted route assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkRouteLookupResponse"
+        "400":
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Route record not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          const: true
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: string
+    NetworkRouteMode:
+      type: string
+      enum:
+        - digest
+        - network-name-only
+    LocationHint:
+      type: string
+      enum:
+        - wnam
+        - enam
+        - sam
+        - weur
+        - eeur
+        - apac
+        - oc
+        - afr
+        - me
+    NetworkRouteLookupResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - networkName
+        - routeKey
+        - routeMode
+        - secretDigestHex
+        - instanceName
+        - locationHint
+        - createdAt
+        - lastResolvedAt
+        - lookupMode
+        - lookupLatencyMs
+        - assignedRegion
+        - assignedRegionName
+        - assignedRegionPrecision
+        - derivedFromNetworkSecret
+      properties:
+        networkName:
+          type: string
+        routeKey:
+          type: string
+        routeMode:
+          $ref: "#/components/schemas/NetworkRouteMode"
+        secretDigestHex:
+          oneOf:
+            - type: string
+            - type: "null"
+        instanceName:
+          type: string
+        locationHint:
+          $ref: "#/components/schemas/LocationHint"
+        createdAt:
+          type: string
+          format: date-time
+        lastResolvedAt:
+          type: string
+          format: date-time
+        lookupMode:
+          $ref: "#/components/schemas/NetworkRouteMode"
+        lookupLatencyMs:
+          type: integer
+          minimum: 0
+        assignedRegion:
+          $ref: "#/components/schemas/LocationHint"
+        assignedRegionName:
+          type: string
+        assignedRegionPrecision:
+          type: string
+          const: region
+        derivedFromNetworkSecret:
+          type: boolean

@@ -198,7 +198,7 @@ export class EasyTierContainer extends Container {
     if (!config) {
       throw new RequestError(
         404,
-        "instance config not found; configure /api/instance first",
+        "instance config not found",
       );
     }
     return config;
@@ -240,8 +240,6 @@ export class EasyTierContainer extends Container {
     };
   }
 }
-
-export class MyContainer extends EasyTierContainer {}
 
 function isControlRequest(request: Request): boolean {
   return new URL(request.url).pathname.startsWith("/control/");
