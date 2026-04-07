@@ -1,8 +1,7 @@
 [Unit]
 Description=ZimaOS EasyTier Web Control
 Wants=network-online.target
-Requires=zerotier-one.service
-After=network-online.target network.service zerotier-one.service zimaos-gateway.service
+After=network-online.target network.service zimaos-gateway.service
 
 [Service]
 Type=simple
