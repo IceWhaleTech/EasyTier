@@ -124,10 +124,10 @@ async fn do_connect(client_mgr: &ClientManager) -> Result<MeshResponse, HttpHand
 
     let zt_info = runtime
         .zerotier
-        .wait_ip_info()
+        .wait_ready_info()
         .await
         .map_err(internal_error)?;
-    let instance_id = zerotier_id_to_uuid(&zt_info.id)
+    let instance_id = mesh_response_instance_id(&zt_info)
         .map_err(|e| internal_error(format!("invalid zerotier id: {e}")))?;
 
     // Keep meshtier as a single instance: always remove old meshtier instances before create.
@@ -359,6 +359,14 @@ fn default_hostname() -> String {
         .unwrap_or_else(|| DEFAULT_HOSTNAME.to_string())
 }
 
+fn mesh_response_instance_id(info: &MeshResponse) -> Result<uuid::Uuid, String> {
+    zerotier_id_to_uuid(&info.id)
+}
+
+fn mesh_response_is_ready(info: &MeshResponse) -> bool {
+    info.ip.is_some() && mesh_response_instance_id(info).is_ok()
+}
+
 fn zerotier_id_to_uuid(zt_id: &str) -> Result<uuid::Uuid, String> {
     if zt_id.len() != 16 {
         return Err(format!(
@@ -523,24 +531,41 @@ impl ZeroTierClient {
         self.set_status(MeshStatus::Offline).await
     }
 
-    async fn wait_ip_info(&self) -> anyhow::Result<MeshResponse> {
+    async fn wait_ready_info(&self) -> anyhow::Result<MeshResponse> {
         let mut ticker = interval(Duration::from_secs(1));
-        timeout(Duration::from_secs(30), async {
+        timeout(Duration::from_secs(300), async {
             loop {
                 ticker.tick().await;
-                let connect_info = self.get_info().await?;
-                if connect_info.ip.is_some() {
-                    break Ok(connect_info);
+                match self.get_info().await {
+                    Ok(connect_info) if mesh_response_is_ready(&connect_info) => {
+                        break Ok(connect_info)
+                    }
+                    Ok(connect_info) => {
+                        tracing::debug!(
+                            id = %connect_info.id,
+                            ip = ?connect_info.ip,
+                            status = ?connect_info.status,
+                            "zerotier not ready yet"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::debug!(
+                            "zerotier get_info failed while waiting for readiness: {err}"
+                        );
+                    }
                 }
             }
         })
-        .await?
+        .await
+        .map_err(|_| anyhow::anyhow!("wait zerotier ready timeout"))?
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{uuid_to_zerotier_id, zerotier_id_to_uuid};
+    use super::{
+        mesh_response_is_ready, uuid_to_zerotier_id, zerotier_id_to_uuid, MeshResponse, MeshStatus,
+    };
 
     #[test]
     fn codec_roundtrip_is_lossless() {
@@ -553,5 +578,28 @@ mod tests {
     #[test]
     fn codec_rejects_invalid_len() {
         assert!(zerotier_id_to_uuid("abc").is_err());
+    }
+
+    #[test]
+    fn mesh_response_requires_valid_id_and_ip() {
+        let ready = MeshResponse {
+            id: "fb8afe3192e4d274".to_string(),
+            name: "node".to_string(),
+            status: MeshStatus::Online,
+            ip: Some("10.0.0.1".to_string()),
+        };
+        assert!(mesh_response_is_ready(&ready));
+
+        let missing_ip = MeshResponse {
+            ip: None,
+            ..ready.clone()
+        };
+        assert!(!mesh_response_is_ready(&missing_ip));
+
+        let invalid_id = MeshResponse {
+            id: "".to_string(),
+            ..ready
+        };
+        assert!(!mesh_response_is_ready(&invalid_id));
     }
 }
