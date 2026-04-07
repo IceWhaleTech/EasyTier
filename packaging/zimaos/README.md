@@ -6,6 +6,7 @@ This folder stores templates used to assemble a `build/sysroot` artifact in the 
 - `usr/bin/zimaos-easytier-core`
 - `usr/lib/systemd/system/zimaos-easytier-web.service`
 - `usr/lib/systemd/system/zimaos-easytier-core.service`
+- `usr/lib/systemd/system-preset/80-zimaos-easytier.preset`
 - `etc/casaos/zimaos-easytier-web.conf.sample`
 - `etc/casaos/zimaos-easytier-core.conf.sample`
 

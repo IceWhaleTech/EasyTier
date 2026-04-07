@@ -24,7 +24,8 @@ for required_file in \
     "$TEMPLATE_DIR/zimaos-easytier-web.conf.sample" \
     "$TEMPLATE_DIR/zimaos-easytier-core.conf.sample" \
     "$TEMPLATE_DIR/zimaos-easytier-web.service" \
-    "$TEMPLATE_DIR/zimaos-easytier-core.service"
+    "$TEMPLATE_DIR/zimaos-easytier-core.service" \
+    "$TEMPLATE_DIR/80-zimaos-easytier.preset"
 do
     if [[ ! -f "$required_file" ]]; then
         echo "missing template file: $required_file" >&2
@@ -70,12 +71,14 @@ rm -rf "$SYSROOT_DIR"
 mkdir -p \
     "$SYSROOT_DIR/usr/bin" \
     "$SYSROOT_DIR/usr/lib/systemd/system" \
+    "$SYSROOT_DIR/usr/lib/systemd/system-preset" \
     "$SYSROOT_DIR/etc/casaos"
 
 install -m 0755 "$WEB_BIN_PATH" "$SYSROOT_DIR/usr/bin/$WEB_OUTPUT_BIN_NAME"
 install -m 0755 "$CORE_BIN_PATH" "$SYSROOT_DIR/usr/bin/$CORE_OUTPUT_BIN_NAME"
 install -m 0644 "$TEMPLATE_DIR/zimaos-easytier-web.service" "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-web.service"
 install -m 0644 "$TEMPLATE_DIR/zimaos-easytier-core.service" "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-core.service"
+install -m 0644 "$TEMPLATE_DIR/80-zimaos-easytier.preset" "$SYSROOT_DIR/usr/lib/systemd/system-preset/80-zimaos-easytier.preset"
 install -m 0644 "$TEMPLATE_DIR/zimaos-easytier-web.conf.sample" "$SYSROOT_DIR/etc/casaos/zimaos-easytier-web.conf.sample"
 install -m 0644 "$TEMPLATE_DIR/zimaos-easytier-core.conf.sample" "$SYSROOT_DIR/etc/casaos/zimaos-easytier-core.conf.sample"
 
@@ -89,6 +92,7 @@ if command -v sha256sum >/dev/null 2>&1; then
         "$SYSROOT_DIR/usr/bin/$CORE_OUTPUT_BIN_NAME" \
         "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-web.service" \
         "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-core.service" \
+        "$SYSROOT_DIR/usr/lib/systemd/system-preset/80-zimaos-easytier.preset" \
         "$SYSROOT_DIR/etc/casaos/zimaos-easytier-web.conf.sample" \
         "$SYSROOT_DIR/etc/casaos/zimaos-easytier-core.conf.sample"
 else
@@ -97,6 +101,7 @@ else
         "$SYSROOT_DIR/usr/bin/$CORE_OUTPUT_BIN_NAME" \
         "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-web.service" \
         "$SYSROOT_DIR/usr/lib/systemd/system/zimaos-easytier-core.service" \
+        "$SYSROOT_DIR/usr/lib/systemd/system-preset/80-zimaos-easytier.preset" \
         "$SYSROOT_DIR/etc/casaos/zimaos-easytier-web.conf.sample" \
         "$SYSROOT_DIR/etc/casaos/zimaos-easytier-core.conf.sample"
 fi

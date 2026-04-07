@@ -1,7 +1,7 @@
 [Unit]
 Description=ZimaOS EasyTier Core
-Wants=network-online.target
-Wants=zimaos-easytier-web.service
+Requires=network-online.target
+Requires=zimaos-easytier-web.service
 After=network-online.target network.service zimaos-easytier-web.service
 
 [Service]

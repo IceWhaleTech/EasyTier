@@ -1,0 +1,2 @@
+enable zimaos-easytier-web.service
+enable zimaos-easytier-core.service
