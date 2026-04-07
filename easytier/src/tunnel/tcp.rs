@@ -262,6 +262,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_ipv6_listener_bind_should_fail() {
+        let mut listener = TcpTunnelListener::new("tcp://[::1]:31016".parse().unwrap());
+        let mut listener2 = TcpTunnelListener::new("tcp://[::1]:31016".parse().unwrap());
+        listener.listen().await.unwrap();
+        assert!(listener2.listen().await.is_err());
+    }
+
+    #[tokio::test]
     async fn ipv6_pingpong() {
         let listener = TcpTunnelListener::new("tcp://[::1]:31015".parse().unwrap());
         let connector = TcpTunnelConnector::new("tcp://[::1]:31015".parse().unwrap());

@@ -13,7 +13,6 @@ use easytier::{
         config::{ConsoleLoggerConfig, FileLoggerConfig, LoggingConfigLoader},
         constants::EASYTIER_VERSION,
         error::Error,
-        network::{local_ipv4, local_ipv6},
     },
     tunnel::{tcp::TcpTunnelListener, udp::UdpTunnelListener, TunnelListener},
     utils::{init_logger, setup_panic_handler},
@@ -164,29 +163,61 @@ pub(crate) fn get_listener_by_url(l: &url::Url) -> Result<Box<dyn TunnelListener
     })
 }
 
-async fn get_dual_stack_listener(
+fn get_listener_urls(protocol: &str, port: u16) -> Result<Vec<url::Url>, Error> {
+    let protocol = protocol.trim().to_lowercase();
+
+    let urls = if protocol == "tcp" || protocol == "udp" {
+        vec![
+            format!("{}://[::]:{}", protocol, port),
+            format!("{}://0.0.0.0:{}", protocol, port),
+        ]
+    } else {
+        vec![format!("{}://0.0.0.0:{}", protocol, port)]
+    };
+
+    urls.into_iter()
+        .map(|url| url.parse().map_err(|_| Error::InvalidUrl(url.clone())))
+        .collect()
+}
+
+async fn add_config_server_listeners(
+    mgr: &mut client_manager::ClientManager,
     protocol: &str,
     port: u16,
-) -> Result<
-    (
-        Option<Box<dyn TunnelListener>>,
-        Option<Box<dyn TunnelListener>>,
-    ),
-    Error,
-> {
-    let is_protocol_support_dual_stack =
-        protocol.trim().to_lowercase() == "tcp" || protocol.trim().to_lowercase() == "udp";
-    let v6_listener = if is_protocol_support_dual_stack && local_ipv6().await.is_ok() {
-        get_listener_by_url(&format!("{}://[::0]:{}", protocol, port).parse().unwrap()).ok()
-    } else {
-        None
-    };
-    let v4_listener = if local_ipv4().await.is_ok() {
-        get_listener_by_url(&format!("{}://0.0.0.0:{}", protocol, port).parse().unwrap()).ok()
-    } else {
-        None
-    };
-    Ok((v6_listener, v4_listener))
+) -> Result<(), String> {
+    let listener_urls = get_listener_urls(protocol, port)
+        .map_err(|e| format!("resolve listener urls failed: {e}"))?;
+    let mut listen_errors = Vec::new();
+    let mut success_count = 0;
+
+    for listener_url in listener_urls {
+        let listener = get_listener_by_url(&listener_url)
+            .map_err(|e| format!("create listener for {} failed: {}", listener_url, e))?;
+
+        match mgr.add_listener(listener).await {
+            Ok(()) => {
+                success_count += 1;
+                tracing::info!(url = %listener_url, "config server listener started");
+            }
+            Err(e) => {
+                tracing::warn!(url = %listener_url, error = ?e, "config server listener failed to start");
+                listen_errors.push(format!("{}: {:?}", listener_url, e));
+            }
+        }
+    }
+
+    if success_count == 0 {
+        return Err(format!(
+            "all config server listeners failed to start: {}",
+            listen_errors.join("; ")
+        ));
+    }
+
+    if !listen_errors.is_empty() {
+        tracing::warn!(errors = ?listen_errors, "config server started with partial listeners");
+    }
+
+    Ok(())
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -201,19 +232,13 @@ async fn main() {
     // let db = db::Db::new(":memory:").await.unwrap();
     let db = db::Db::new(cli.db).await.unwrap();
     let mut mgr = client_manager::ClientManager::new(db.clone(), cli.geoip_db);
-    let (v6_listener, v4_listener) =
-        get_dual_stack_listener(&cli.config_server_protocol, cli.config_server_port)
-            .await
-            .unwrap();
-    if v4_listener.is_none() && v6_listener.is_none() {
-        panic!("Listen to both IPv4 and IPv6 failed");
-    }
-    if let Some(listener) = v6_listener {
-        mgr.add_listener(listener).await.unwrap();
-    }
-    if let Some(listener) = v4_listener {
-        mgr.add_listener(listener).await.unwrap();
-    }
+    add_config_server_listeners(
+        &mut mgr,
+        &cli.config_server_protocol,
+        cli.config_server_port,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("failed to start config server listeners: {e}"));
 
     let mgr = Arc::new(mgr);
 
@@ -267,4 +292,39 @@ async fn main() {
     };
 
     tokio::signal::ctrl_c().await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_listener_urls;
+
+    #[test]
+    fn config_server_listener_urls_use_dual_stack_for_tcp_and_udp() {
+        let tcp_urls = get_listener_urls("tcp", 22020).unwrap();
+        assert_eq!(tcp_urls.len(), 2);
+        assert_eq!(tcp_urls[0].scheme(), "tcp");
+        assert_eq!(tcp_urls[0].host_str(), Some("[::]"));
+        assert_eq!(tcp_urls[0].port(), Some(22020));
+        assert_eq!(tcp_urls[1].scheme(), "tcp");
+        assert_eq!(tcp_urls[1].host_str(), Some("0.0.0.0"));
+        assert_eq!(tcp_urls[1].port(), Some(22020));
+
+        let udp_urls = get_listener_urls("udp", 22020).unwrap();
+        assert_eq!(udp_urls.len(), 2);
+        assert_eq!(udp_urls[0].scheme(), "udp");
+        assert_eq!(udp_urls[0].host_str(), Some("[::]"));
+        assert_eq!(udp_urls[0].port(), Some(22020));
+        assert_eq!(udp_urls[1].scheme(), "udp");
+        assert_eq!(udp_urls[1].host_str(), Some("0.0.0.0"));
+        assert_eq!(udp_urls[1].port(), Some(22020));
+    }
+
+    #[test]
+    fn config_server_listener_urls_keep_single_stack_for_ws() {
+        let ws_urls = get_listener_urls("ws", 22020).unwrap();
+        assert_eq!(ws_urls.len(), 1);
+        assert_eq!(ws_urls[0].scheme(), "ws");
+        assert_eq!(ws_urls[0].host_str(), Some("0.0.0.0"));
+        assert_eq!(ws_urls[0].port(), Some(22020));
+    }
 }
