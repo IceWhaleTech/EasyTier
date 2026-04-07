@@ -6,7 +6,7 @@ After=network-online.target network.service zimaos-easytier-web.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/zimaos-easytier-core -w tcp://[::1]:22020/admin
+ExecStart=/usr/bin/zimaos-easytier-core -w tcp://127.0.0.1:22020/admin
 Restart=always
 RestartSec=1s
 
