@@ -127,20 +127,7 @@ async fn do_connect(client_mgr: &ClientManager) -> Result<MeshResponse, HttpHand
         .wait_ready_info()
         .await
         .map_err(internal_error)?;
-    let instance_id = mesh_response_instance_id(&zt_info)
-        .map_err(|e| internal_error(format!("invalid zerotier id: {e}")))?;
-
-    // Keep meshtier as a single instance: always remove old meshtier instances before create.
-    clear_meshtier_networks(client_mgr, runtime.identity).await?;
-
-    let cfg = default_mesh_network_config(instance_id, &zt_info.id, &zt_info.id);
-    client_mgr
-        .handle_run_network_instance(runtime.identity, cfg, true)
-        .await
-        .map_err(convert_remote_error)?;
-
-    // Keep startup checks for EasyTier instance, but return ZT-compatible payload for API callers.
-    wait_easytier_online(client_mgr, runtime.identity, instance_id).await?;
+    register_meshtier_instance(client_mgr, runtime.identity, &zt_info).await?;
 
     match runtime.zerotier.get_info().await {
         Ok(info) => Ok(info),
@@ -217,6 +204,25 @@ async fn wait_easytier_online(
     .map_err(|_| internal_error("wait easytier online timeout"))?
 }
 
+async fn register_meshtier_instance(
+    client_mgr: &ClientManager,
+    identity: SessionIdentity,
+    zt_info: &MeshResponse,
+) -> Result<MeshResponse, HttpHandleError> {
+    let instance_id = mesh_response_instance_id(zt_info)
+        .map_err(|e| internal_error(format!("invalid zerotier id: {e}")))?;
+
+    clear_meshtier_networks(client_mgr, identity).await?;
+
+    let cfg = default_mesh_network_config(instance_id, &zt_info.id, &zt_info.id);
+    client_mgr
+        .handle_run_network_instance(identity, cfg, true)
+        .await
+        .map_err(convert_remote_error)?;
+
+    wait_easytier_online(client_mgr, identity, instance_id).await
+}
+
 async fn clear_meshtier_networks(
     client_mgr: &ClientManager,
     identity: SessionIdentity,
@@ -266,6 +272,33 @@ fn add_running_meshtier_network_ids(
             }
         }
     }
+}
+
+async fn has_meshtier_instance(
+    client_mgr: &ClientManager,
+    identity: SessionIdentity,
+) -> Result<bool, HttpHandleError> {
+    let mut network_ids = BTreeSet::new();
+
+    if let Ok(info) = client_mgr.handle_collect_network_info(identity, None).await {
+        add_running_meshtier_network_ids(&mut network_ids, info);
+    }
+
+    let saved_networks: Vec<user_running_network_configs::Model> = client_mgr
+        .get_storage()
+        .list_network_configs(identity, ListNetworkProps::All)
+        .await
+        .map_err(convert_db_error)?;
+
+    for network in saved_networks {
+        if let Ok(inst_id) = uuid::Uuid::parse_str(network.get_network_inst_id()) {
+            if is_meshtier_instance(&inst_id) {
+                network_ids.insert(inst_id);
+            }
+        }
+    }
+
+    Ok(!network_ids.is_empty())
 }
 
 fn is_meshtier_instance(inst_id: &uuid::Uuid) -> bool {
@@ -473,6 +506,74 @@ async fn pick_admin_identity(
         ));
     };
     Ok((admin.user_id, admin.machine_id))
+}
+
+pub(crate) async fn ensure_meshtier_instance_for_startup(
+    client_mgr: &ClientManager,
+) -> anyhow::Result<bool> {
+    let runtime = match MeshRuntime::from_request(client_mgr).await {
+        Ok(runtime) => runtime,
+        Err((StatusCode::SERVICE_UNAVAILABLE, Json(err))) => {
+            tracing::debug!(
+                "startup meshtier reconcile waiting for core session: {}",
+                err.message
+            );
+            return Ok(false);
+        }
+        Err((status, Json(err))) => {
+            return Err(anyhow::anyhow!(
+                "startup meshtier reconcile failed to build runtime, status {}: {}",
+                status,
+                err.message
+            ));
+        }
+    };
+
+    let zt_info = runtime
+        .zerotier
+        .get_info()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to get zerotier info: {e}"))?;
+
+    if zt_info.status != MeshStatus::Online || !mesh_response_is_ready(&zt_info) {
+        tracing::debug!(
+            id = %zt_info.id,
+            ip = ?zt_info.ip,
+            status = ?zt_info.status,
+            "startup meshtier reconcile waiting for zerotier readiness"
+        );
+        return Ok(false);
+    }
+
+    match has_meshtier_instance(client_mgr, runtime.identity).await {
+        Ok(true) => {
+            tracing::info!("startup meshtier reconcile found existing meshtier instance");
+            return Ok(true);
+        }
+        Ok(false) => {}
+        Err((status, Json(err))) => {
+            return Err(anyhow::anyhow!(
+                "failed to inspect meshtier instance state, status {}: {}",
+                status,
+                err.message
+            ));
+        }
+    }
+
+    register_meshtier_instance(client_mgr, runtime.identity, &zt_info)
+        .await
+        .map_err(|(status, Json(err))| {
+            anyhow::anyhow!(
+                "startup meshtier reconcile failed to register instance, status {}: {}",
+                status,
+                err.message
+            )
+        })?;
+    tracing::info!(
+        zerotier_id = %zt_info.id,
+        "startup meshtier reconcile registered meshtier instance"
+    );
+    Ok(true)
 }
 
 impl ZeroTierClient {

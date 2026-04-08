@@ -1,6 +1,6 @@
 mod auth;
 pub(crate) mod captcha;
-mod meshtier;
+pub(crate) mod meshtier;
 mod network;
 mod users;
 

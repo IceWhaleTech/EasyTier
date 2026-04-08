@@ -25,6 +25,7 @@ mod db;
 mod gateway;
 mod migrator;
 mod restful;
+mod system_startup;
 
 #[cfg(feature = "embed")]
 mod web;
@@ -271,6 +272,8 @@ async fn main() {
     .start()
     .await
     .unwrap();
+
+    let _system_startup_task = system_startup::start(mgr.clone());
 
     gateway::register_route_to_gateway_if_needed(cli.api_server_addr, cli.api_server_port).await;
 
