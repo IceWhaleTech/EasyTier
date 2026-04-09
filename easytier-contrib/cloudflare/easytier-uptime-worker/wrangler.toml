@@ -1,6 +1,7 @@
 name = "easytier-uptime"
 main = "build/index.js"
 compatibility_date = "2026-04-09"
+account_id = "09a207f03f6818f4ab62111b20a34941"
 
 [build]
 command = "cargo install \"worker-build@^0.7.5\" && worker-build --release"
@@ -9,7 +10,6 @@ command = "cargo install \"worker-build@^0.7.5\" && worker-build --release"
 enabled = true
 
 [vars]
-ADMIN_PASSWORD = "change-me"
 TOKEN_TTL_SECONDS = "86400"
 HEALTH_RETENTION_DAYS = "30"
 
@@ -19,9 +19,14 @@ crons = ["*/5 * * * *"]
 [[d1_databases]]
 binding = "UPTIME_DB"
 database_name = "easytier-uptime"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "4abaf83c-2187-49a2-acf2-d577fe13658a"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "ADMIN_SESSIONS"
-id = "00000000000000000000000000000000"
+id = "41f34b68b04645d4b4efb41cfc5bccad"
+
+[[routes]]
+pattern = "uptime.icewhale.io"
+zone_name = "icewhale.io"
+custom_domain = true
