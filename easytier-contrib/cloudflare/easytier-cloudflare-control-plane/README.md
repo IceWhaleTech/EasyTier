@@ -31,7 +31,7 @@
 ## 本地开发
 
 ```bash
-cd easytier-contrib/easytier-cloudflare-control-plane
+cd easytier-contrib/cloudflare/easytier-cloudflare-control-plane
 npm install
 npm run cf-typegen
 npm run dev
