@@ -1,6 +1,4 @@
-use std::time::Instant;
-
-use worker::{SecureTransport, Socket};
+use worker::{Date, SecureTransport, Socket};
 
 use crate::{
     error::{AppError, AppResult},
@@ -39,14 +37,14 @@ pub async fn probe_target(host: &str, port: i32, protocol: &str) -> AppResult<Pr
         .connect(host, port as u16)
         .map_err(AppError::from)?;
 
-    let started_at = Instant::now();
+    let started_at = Date::now().as_millis();
     match socket.opened().await {
         Ok(_) => {
             let _ = socket.close().await;
             Ok(ProbeOutcome {
                 status: "healthy".to_string(),
                 is_active: true,
-                response_time: Some(started_at.elapsed().as_millis() as i32),
+                response_time: Some((Date::now().as_millis().saturating_sub(started_at)) as i32),
                 error_message: None,
             })
         }
