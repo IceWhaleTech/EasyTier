@@ -127,7 +127,7 @@ pub async fn create_node(
         .and_then(|meta| meta.last_row_id)
         .ok_or_else(|| AppError::Internal("failed to get inserted node id".to_string()))?;
 
-    get_node(env, row_id as i32, true).await
+    get_node(env, row_id as i32, false).await
 }
 
 pub async fn get_node(
