@@ -1,0 +1,26 @@
+[package]
+name = "easytier-cloudflare-uptime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["json"] }
+console_error_panic_hook = "0.1.7"
+serde_json = "1.0.149"
+tower-http = { version = "0.6", features = ["cors"] }
+tower-service = "0.3.3"
+worker = { version = "0.7.5", features = ["axum", "d1", "http"] }
+worker-macros = { version = "0.7.5", features = ["http"] }
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[workspace]

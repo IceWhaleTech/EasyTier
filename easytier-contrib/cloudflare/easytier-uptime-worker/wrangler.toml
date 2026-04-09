@@ -1,0 +1,27 @@
+name = "easytier-uptime"
+main = "build/index.js"
+compatibility_date = "2026-04-09"
+
+[build]
+command = "cargo install \"worker-build@^0.7.5\" && worker-build --release"
+
+[observability.logs]
+enabled = true
+
+[vars]
+ADMIN_PASSWORD = "change-me"
+TOKEN_TTL_SECONDS = "86400"
+HEALTH_RETENTION_DAYS = "30"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "UPTIME_DB"
+database_name = "easytier-uptime"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[kv_namespaces]]
+binding = "ADMIN_SESSIONS"
+id = "00000000000000000000000000000000"
+
