@@ -127,6 +127,14 @@ async fn test_connection(
 ) -> AppResult<Json<ApiResponse<models::NodeResponse>>> {
     request.validate()?;
     let probe = probe::probe_request(&request).await?;
+    if !probe.is_active {
+        return Err(error::AppError::BadRequest(
+            probe
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "connection test failed".to_string()),
+        ));
+    }
     Ok(Json(ApiResponse::success(
         models::NodeResponse::from_probe(&request, &probe),
     )))
