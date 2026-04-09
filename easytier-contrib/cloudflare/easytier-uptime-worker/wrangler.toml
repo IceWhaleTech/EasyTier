@@ -20,8 +20,8 @@ crons = ["*/5 * * * *"]
 binding = "UPTIME_DB"
 database_name = "easytier-uptime"
 database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "ADMIN_SESSIONS"
 id = "00000000000000000000000000000000"
-
