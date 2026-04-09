@@ -75,8 +75,6 @@ pub async fn create_node(
     let timestamp = now_iso();
     let description = request.description.clone().unwrap_or_default();
     let network_secret = request.network_secret.clone().unwrap_or_default();
-    let qq_number = request.qq_number.clone().unwrap_or_default();
-    let wechat = request.wechat.clone().unwrap_or_default();
     let mail = request.mail.clone().unwrap_or_default();
 
     let statement = query!(
@@ -114,8 +112,8 @@ pub async fn create_node(
         &0,
         &false,
         &false,
-        &qq_number,
-        &wechat,
+        &"",
+        &"",
         &mail,
         &timestamp,
         &timestamp
@@ -398,16 +396,8 @@ pub async fn update_node(
         .clone()
         .or(current.network_secret.clone())
         .unwrap_or_default();
-    let qq_number = request
-        .qq_number
-        .clone()
-        .or(current.qq_number.clone())
-        .unwrap_or_default();
-    let wechat = request
-        .wechat
-        .clone()
-        .or(current.wechat.clone())
-        .unwrap_or_default();
+    let qq_number = current.qq_number.clone().unwrap_or_default();
+    let wechat = current.wechat.clone().unwrap_or_default();
     let mail = request
         .mail
         .clone()

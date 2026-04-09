@@ -406,8 +406,6 @@ export default {
         allow_relay: node.allow_relay,
         network_name: node.network_name,
         network_secret: node.network_secret,
-        wechat: node.wechat,
-        qq_number: node.qq_number,
         mail: node.mail,
         tags: Array.isArray(node.tags) ? [...node.tags] : []
       }
@@ -428,8 +426,6 @@ export default {
           allow_relay: formData.allow_relay,
           network_name: formData.network_name,
           network_secret: formData.network_secret,
-          wechat: formData.wechat,
-          qq_number: formData.qq_number,
           mail: formData.mail,
           tags: Array.isArray(formData.tags) ? formData.tags : []
         }

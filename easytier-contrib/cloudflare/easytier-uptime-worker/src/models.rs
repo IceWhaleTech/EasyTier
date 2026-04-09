@@ -76,8 +76,6 @@ pub struct CreateNodeRequest {
     pub allow_relay: bool,
     pub network_name: String,
     pub network_secret: Option<String>,
-    pub qq_number: Option<String>,
-    pub wechat: Option<String>,
     pub mail: Option<String>,
 }
 
@@ -92,10 +90,7 @@ impl CreateNodeRequest {
             self.max_connections,
             &self.network_name,
             self.network_secret.as_deref(),
-            self.qq_number.as_deref(),
-            self.wechat.as_deref(),
             self.mail.as_deref(),
-            true,
         )
     }
 }
@@ -112,8 +107,6 @@ pub struct UpdateNodeRequest {
     pub allow_relay: Option<bool>,
     pub network_name: Option<String>,
     pub network_secret: Option<String>,
-    pub qq_number: Option<String>,
-    pub wechat: Option<String>,
     pub mail: Option<String>,
     pub tags: Option<Vec<String>>,
 }
@@ -148,8 +141,6 @@ impl UpdateNodeRequest {
         }
         validate_optional("network_name", self.network_name.as_deref(), 100)?;
         validate_optional("network_secret", self.network_secret.as_deref(), 100)?;
-        validate_optional("qq_number", self.qq_number.as_deref(), 20)?;
-        validate_optional("wechat", self.wechat.as_deref(), 50)?;
         validate_optional("mail", self.mail.as_deref(), 255)?;
         Ok(())
     }
@@ -309,8 +300,8 @@ impl NodeResponse {
             health_record_total_counter_ring: Vec::new(),
             health_record_healthy_counter_ring: Vec::new(),
             ring_granularity: 0,
-            qq_number: request.qq_number.clone(),
-            wechat: request.wechat.clone(),
+            qq_number: None,
+            wechat: None,
             mail: request.mail.clone(),
             tags: Vec::new(),
         }
@@ -330,10 +321,7 @@ fn validate_node_payload(
     max_connections: i32,
     network_name: &str,
     network_secret: Option<&str>,
-    qq_number: Option<&str>,
-    wechat: Option<&str>,
     mail: Option<&str>,
-    require_contact: bool,
 ) -> AppResult<()> {
     validate_non_empty("name", name, 100)?;
     validate_non_empty("host", host, 255)?;
@@ -341,8 +329,6 @@ fn validate_node_payload(
     validate_non_empty("network_name", network_name, 100)?;
     validate_optional("description", description, 500)?;
     validate_optional("network_secret", network_secret, 100)?;
-    validate_optional("qq_number", qq_number, 20)?;
-    validate_optional("wechat", wechat, 50)?;
     validate_optional("mail", mail, 255)?;
 
     if !(1..=65_535).contains(&port) {
@@ -355,18 +341,6 @@ fn validate_node_payload(
         return Err(AppError::BadRequest(
             "max_connections must be between 1 and 10000".to_string(),
         ));
-    }
-
-    if require_contact {
-        let has_contact = qq_number.is_some_and(|value| !value.trim().is_empty())
-            || wechat.is_some_and(|value| !value.trim().is_empty())
-            || mail.is_some_and(|value| !value.trim().is_empty());
-
-        if !has_contact {
-            return Err(AppError::BadRequest(
-                "at least one contact field must be provided".to_string(),
-            ));
-        }
     }
 
     Ok(())

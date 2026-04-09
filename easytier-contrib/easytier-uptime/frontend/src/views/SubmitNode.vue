@@ -9,7 +9,7 @@
         返回
       </el-button>
       <h1>提交共享节点</h1>
-      <p class="subtitle">分享您的EasyTier节点，为社区贡献力量</p>
+      <p class="subtitle">提交可用的 EasyTier 节点，审核通过后会展示在节点列表中</p>
     </div>
 
     <el-row :gutter="20" justify="center">
@@ -47,7 +47,7 @@
               </el-icon>
               <div>
                 <h4>节点要求</h4>
-                <p>确保您的节点稳定运行，具有良好的网络连接</p>
+                <p>请确认地址、端口、协议以及网络参数填写准确，节点能够稳定访问</p>
               </div>
             </div>
 
@@ -57,7 +57,7 @@
               </el-icon>
               <div>
                 <h4>隐私保护</h4>
-                <p>关键信息仅社区管理员可见</p>
+                <p>联系邮箱为选填项，不对外展示，仅在必要时用于联系</p>
               </div>
             </div>
 
@@ -157,7 +157,7 @@ const handleSubmit = async (submitData) => {
     if (response.success) {
       ElMessage.success('节点提交成功！')
       ElMessageBox.confirm(
-        '节点已成功提交，等待管理员审核后将会展示在节点列表中。如果信息填写错误请重新提交或者联系管理员更改。',
+        '节点已成功提交，等待管理员审核后将会展示在节点列表中。如需修改，请联系管理员或重新提交。',
         '提交成功',
         {
           confirmButtonText: '查看列表',
@@ -174,7 +174,7 @@ const handleSubmit = async (submitData) => {
     }
   } catch (error) {
     console.error('提交节点失败:', error)
-    ElMessage.error('提交失败，请检查网络连接')
+    ElMessage.error(error.response?.data?.error || '提交失败，请稍后重试')
   } finally {
     submitting.value = false
   }

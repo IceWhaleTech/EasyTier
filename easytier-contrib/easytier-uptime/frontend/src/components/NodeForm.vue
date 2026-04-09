@@ -58,7 +58,7 @@
             </el-icon>
           </template>
         </el-input>
-        <div class="form-tip">与 EasyTier 的 network name 一致，用于后端探活</div>
+        <div class="form-tip">与 EasyTier 的 network name 一致，用于连通性测试和后续定时探测</div>
       </el-form-item>
 
       <el-form-item label="网络密码" prop="network_secret" required>
@@ -70,7 +70,7 @@
             </el-icon>
           </template>
         </el-input>
-        <div class="form-tip">与 EasyTier 的 network secret 一致</div>
+        <div class="form-tip">与 EasyTier 的 network secret 一致，仅用于连通性测试和探测</div>
       </el-form-item>
 
       <el-form-item label="最大网络数" prop="max_connections" required>
@@ -94,62 +94,36 @@
         <div class="form-tip">用于分类与检索，建议 1-6 个标签，每个不超过 32 字符</div>
       </el-form-item>
 
-      <!-- 联系方式 -->
-      <el-form-item label="联系方式" prop="contact_info">
-        <div class="contact-section">
-          <el-form-item label="微信" prop="wechat">
-            <el-input v-model="form.wechat" placeholder="请输入微信号" maxlength="50" clearable>
-              <template #prefix>
-                <el-icon>
-                  <ChatDotRound />
-                </el-icon>
-              </template>
-            </el-input>
-          </el-form-item>
-
-          <el-form-item label="QQ" prop="qq_number">
-            <el-input v-model="form.qq_number" placeholder="请输入QQ号" maxlength="20" clearable>
-              <template #prefix>
-                <el-icon>
-                  <User />
-                </el-icon>
-              </template>
-            </el-input>
-          </el-form-item>
-
-          <el-form-item label="邮箱" prop="mail">
-            <el-input v-model="form.mail" placeholder="请输入邮箱地址" maxlength="100" clearable>
-              <template #prefix>
-                <el-icon>
-                  <Message />
-                </el-icon>
-              </template>
-            </el-input>
-          </el-form-item>
-
-          <div class="form-tip">请至少填写一种联系方式，便于节点问题时联系您（仅管理员可见）</div>
-        </div>
+      <el-form-item label="联系邮箱" prop="mail">
+        <el-input v-model="form.mail" placeholder="选填，便于必要时联系您" maxlength="100" clearable>
+          <template #prefix>
+            <el-icon>
+              <Message />
+            </el-icon>
+          </template>
+        </el-input>
+        <div class="form-tip">选填，不对外展示，仅在需要协助核实节点信息时使用</div>
       </el-form-item>
 
       <!-- 连接测试 -->
-      <el-form-item label="连接测试">
+      <el-form-item v-if="props.showConnectionTest" label="连通性测试">
         <div class="test-section">
           <el-button type="warning" @click="testConnection" :loading="testing" :disabled="!canTest">
             <el-icon>
               <Connection />
             </el-icon>
-            测试连接
+            测试连通性
           </el-button>
           <div v-if="testResult" class="test-result">
             <el-tag :type="testResult.success ? 'success' : 'danger'" size="large">
-              {{ testResult.success ? '连接成功' : '连接失败' }}
+              {{ testResult.success ? '测试成功' : '测试失败' }}
             </el-tag>
             <span v-if="testResult.message" class="test-message">
               {{ testResult.message }}
             </span>
           </div>
         </div>
-        <div class="form-tip">建议在提交前测试连接以确保节点可用</div>
+        <div class="form-tip">仅校验地址、端口、协议和网络参数是否可达，与邮箱无关</div>
       </el-form-item>
 
       <!-- 使用条款 -->
@@ -219,13 +193,10 @@ import { ref, reactive, computed, watch } from 'vue'
 import {
   Monitor,
   Location,
-  PriceTag,
   Connection,
   Upload,
   Edit,
   RefreshLeft,
-  ChatDotRound,
-  User,
   Message
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -244,8 +215,6 @@ const props = defineProps({
       network_secret: '',
       max_connections: 100,
       description: '',
-      wechat: '',
-      qq_number: '',
       mail: '',
       tags: [],
       agreed: false
@@ -334,28 +303,9 @@ const rules = {
   description: [
     { max: 500, message: '描述长度不能超过500个字符', trigger: 'blur' }
   ],
-  wechat: [
-    { max: 50, message: '微信号长度不能超过50个字符', trigger: 'blur' }
-  ],
-  qq_number: [
-    { max: 20, message: 'QQ号长度不能超过20个字符', trigger: 'blur' },
-    { pattern: /^[1-9][0-9]{4,19}$/, message: '请输入有效的QQ号', trigger: 'blur' }
-  ],
   mail: [
     { max: 100, message: '邮箱地址长度不能超过100个字符', trigger: 'blur' },
     { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' }
-  ],
-  contact_info: [
-    {
-      validator: (rule, value, callback) => {
-        if (!form.wechat && !form.qq_number && !form.mail) {
-          callback(new Error('请至少填写一种联系方式'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur'
-    }
   ],
   agreed: [
     {
@@ -419,8 +369,6 @@ const buildDataFromForm = () => {
     allow_relay: form.allow_relay,
     network_name: form.network_name || null,
     network_secret: form.network_secret || null,
-    wechat: form.wechat || null,
-    qq_number: form.qq_number || null,
     mail: form.mail || null
   }
   // 仅在管理员编辑时附带标签
@@ -450,23 +398,23 @@ const testConnection = async () => {
     if (response.success) {
       testResult.value = {
         success: true,
-        message: '连接测试成功，节点可正常访问'
+        message: '连通性测试成功，当前参数可用'
       }
-      ElMessage.success('连接测试成功')
+      ElMessage.success('连通性测试成功')
     } else {
       testResult.value = {
         success: false,
-        message: response.error || '连接测试失败'
+        message: response.error || '连通性测试失败'
       }
-      ElMessage.error('连接测试失败')
+      ElMessage.error('连通性测试失败')
     }
   } catch (error) {
-    console.error('连接测试失败:', error)
+    console.error('连通性测试失败:', error)
     testResult.value = {
       success: false,
-      message: error.response?.data?.error || '测试过程中发生错误，请检查网络连接'
+      message: error.response?.data?.error || '测试过程中发生错误，请检查连接参数'
     }
-    ElMessage.error('连接测试失败')
+    ElMessage.error('连通性测试失败')
   } finally {
     testing.value = false
   }
