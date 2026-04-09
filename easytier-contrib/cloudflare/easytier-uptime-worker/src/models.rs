@@ -277,6 +277,7 @@ pub struct ProbeOutcome {
     pub status: String,
     pub is_active: bool,
     pub response_time: Option<i32>,
+    pub error_message: Option<String>,
 }
 
 impl NodeResponse {

@@ -13,6 +13,7 @@ use crate::{
         HealthStatsResponse, NodeFilterParams, NodeResponse, PaginatedResponse, PaginationParams,
         UpdateNodeRequest, now_iso,
     },
+    probe,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -474,6 +475,72 @@ pub async fn delete_node(env: &worker::Env, node_id: i32) -> AppResult<()> {
     query!(&db, "DELETE FROM shared_nodes WHERE id = ?", &node_id)?
         .run()
         .await?;
+    Ok(())
+}
+
+pub async fn run_scheduled_health_checks(env: &worker::Env, config: &AppConfig) -> AppResult<()> {
+    let rows: Vec<SharedNodeRow> = query_all(
+        env,
+        "SELECT
+            id,
+            name,
+            host,
+            port,
+            protocol,
+            version,
+            allow_relay,
+            network_name,
+            network_secret,
+            description,
+            max_connections,
+            current_connections,
+            is_active,
+            is_approved,
+            qq_number,
+            wechat,
+            mail,
+            created_at,
+            updated_at
+         FROM shared_nodes
+         ORDER BY id ASC",
+        &[],
+    )
+    .await?;
+
+    let db = env.d1(DB_BINDING)?;
+    let checked_at = now_iso();
+
+    for row in rows {
+        let probe = probe::probe_target(&row.host, row.port, &row.protocol).await?;
+        query!(
+            &db,
+            "UPDATE shared_nodes
+             SET is_active = ?, current_connections = ?, updated_at = ?
+             WHERE id = ?",
+            &probe.is_active,
+            &0,
+            &checked_at,
+            &row.id
+        )?
+        .run()
+        .await?;
+
+        let error_message = probe.error_message.clone().unwrap_or_default();
+        query!(
+            &db,
+            "INSERT INTO health_records (node_id, status, response_time, error_message, checked_at)
+             VALUES (?, ?, ?, ?, ?)",
+            &row.id,
+            &probe.status,
+            &probe.response_time,
+            &error_message,
+            &checked_at
+        )?
+        .run()
+        .await?;
+    }
+
+    cleanup_old_health_records(env, config.health_retention_days).await?;
     Ok(())
 }
 
@@ -941,6 +1008,20 @@ async fn node_exists(env: &worker::Env, host: &str, port: i32, protocol: &str) -
 async fn fetch_count(env: &worker::Env, sql: &str, params: &[Value]) -> AppResult<i64> {
     let row: Option<CountRow> = query_first(env, sql, params).await?;
     Ok(row.map_or(0, |row| row.total))
+}
+
+async fn cleanup_old_health_records(env: &worker::Env, retention_days: i64) -> AppResult<()> {
+    let cutoff = (Utc::now() - Duration::days(retention_days))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let db = env.d1(DB_BINDING)?;
+    query!(
+        &db,
+        "DELETE FROM health_records WHERE checked_at < ?",
+        &cutoff
+    )?
+    .run()
+    .await?;
+    Ok(())
 }
 
 async fn query_first<T>(env: &worker::Env, sql: &str, params: &[Value]) -> AppResult<Option<T>>

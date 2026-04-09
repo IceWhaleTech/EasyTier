@@ -26,6 +26,9 @@ pub async fn probe_target(host: &str, port: i32, protocol: &str) -> AppResult<Pr
                 status: "unsupported".to_string(),
                 is_active: false,
                 response_time: None,
+                error_message: Some(
+                    "Cloudflare Workers does not support outbound UDP probes".to_string(),
+                ),
             });
         }
         _ => SecureTransport::Off,
@@ -44,14 +47,16 @@ pub async fn probe_target(host: &str, port: i32, protocol: &str) -> AppResult<Pr
                 status: "healthy".to_string(),
                 is_active: true,
                 response_time: Some(started_at.elapsed().as_millis() as i32),
+                error_message: None,
             })
         }
-        Err(_error) => {
+        Err(error) => {
             let _ = socket.close().await;
             Ok(ProbeOutcome {
                 status: "unhealthy".to_string(),
                 is_active: false,
                 response_time: None,
+                error_message: Some(error.to_string()),
             })
         }
     }

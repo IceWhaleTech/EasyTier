@@ -67,6 +67,19 @@ async fn fetch(
     Ok(router(state).call(req).await?)
 }
 
+#[event(scheduled)]
+async fn scheduled(event: ScheduledEvent, env: Env, ctx: ScheduleContext) {
+    console_error_panic_hook::set_once();
+    let config = AppConfig::from_env(&env);
+    let cron = event.cron();
+
+    ctx.wait_until(async move {
+        if let Err(error) = db::run_scheduled_health_checks(&env, &config).await {
+            console_error!("scheduled health check failed for cron {}: {}", cron, error);
+        }
+    });
+}
+
 async fn root() -> impl IntoResponse {
     Json(serde_json::json!({
         "name": "easytier-cloudflare-uptime",

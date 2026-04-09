@@ -4,7 +4,6 @@ use worker::Env;
 pub struct AppConfig {
     pub admin_password: String,
     pub token_ttl_seconds: u64,
-    #[allow(dead_code)]
     pub health_retention_days: i64,
     pub ring_granularity_seconds: u32,
     pub ring_window_hours: i64,
