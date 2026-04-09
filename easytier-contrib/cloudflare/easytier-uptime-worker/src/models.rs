@@ -83,47 +83,74 @@ pub struct CreateNodeRequest {
 
 impl CreateNodeRequest {
     pub fn validate(&self) -> AppResult<()> {
-        validate_non_empty("name", &self.name, 100)?;
-        validate_non_empty("host", &self.host, 255)?;
-        validate_non_empty("protocol", &self.protocol, 20)?;
-        validate_non_empty("network_name", &self.network_name, 100)?;
-        validate_optional("description", self.description.as_deref(), 500)?;
-        validate_optional("network_secret", self.network_secret.as_deref(), 100)?;
-        validate_optional("qq_number", self.qq_number.as_deref(), 20)?;
-        validate_optional("wechat", self.wechat.as_deref(), 50)?;
-        validate_optional("mail", self.mail.as_deref(), 255)?;
+        validate_node_payload(
+            &self.name,
+            &self.host,
+            self.port,
+            &self.protocol,
+            self.description.as_deref(),
+            self.max_connections,
+            &self.network_name,
+            self.network_secret.as_deref(),
+            self.qq_number.as_deref(),
+            self.wechat.as_deref(),
+            self.mail.as_deref(),
+            true,
+        )
+    }
+}
 
-        if !(1..=65_535).contains(&self.port) {
-            return Err(AppError::BadRequest(
-                "port must be between 1 and 65535".to_string(),
-            ));
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateNodeRequest {
+    pub name: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<i32>,
+    pub protocol: Option<String>,
+    pub description: Option<String>,
+    pub max_connections: Option<i32>,
+    pub is_active: Option<bool>,
+    pub allow_relay: Option<bool>,
+    pub network_name: Option<String>,
+    pub network_secret: Option<String>,
+    pub qq_number: Option<String>,
+    pub wechat: Option<String>,
+    pub mail: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+impl UpdateNodeRequest {
+    pub fn validate(&self) -> AppResult<()> {
+        if let Some(name) = self.name.as_deref() {
+            validate_non_empty("name", name, 100)?;
         }
-
-        if !(1..=10_000).contains(&self.max_connections) {
+        if let Some(host) = self.host.as_deref() {
+            validate_non_empty("host", host, 255)?;
+        }
+        if let Some(protocol) = self.protocol.as_deref() {
+            validate_non_empty("protocol", protocol, 20)?;
+        }
+        if let Some(description) = self.description.as_deref() {
+            validate_optional("description", Some(description), 500)?;
+        }
+        if let Some(max_connections) = self.max_connections
+            && !(1..=10_000).contains(&max_connections)
+        {
             return Err(AppError::BadRequest(
                 "max_connections must be between 1 and 10000".to_string(),
             ));
         }
-
-        let has_contact = self
-            .qq_number
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .wechat
-                .as_ref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .mail
-                .as_ref()
-                .is_some_and(|value| !value.trim().is_empty());
-
-        if !has_contact {
+        if let Some(port) = self.port
+            && !(1..=65_535).contains(&port)
+        {
             return Err(AppError::BadRequest(
-                "at least one contact field must be provided".to_string(),
+                "port must be between 1 and 65535".to_string(),
             ));
         }
-
+        validate_optional("network_name", self.network_name.as_deref(), 100)?;
+        validate_optional("network_secret", self.network_secret.as_deref(), 100)?;
+        validate_optional("qq_number", self.qq_number.as_deref(), 20)?;
+        validate_optional("wechat", self.wechat.as_deref(), 50)?;
+        validate_optional("mail", self.mail.as_deref(), 255)?;
         Ok(())
     }
 }
@@ -146,6 +173,33 @@ pub struct HealthFilterParams {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HealthStatsParams {
     pub hours: Option<i64>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct AdminNodeFilterParams {
+    pub is_active: Option<bool>,
+    pub is_approved: Option<bool>,
+    pub protocol: Option<String>,
+    pub search: Option<String>,
+    pub tag: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminLoginRequest {
+    pub password: String,
+}
+
+impl AdminLoginRequest {
+    pub fn validate(&self) -> AppResult<()> {
+        validate_non_empty("password", &self.password, 255)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminLoginResponse {
+    pub token: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,6 +318,57 @@ impl NodeResponse {
 
 pub fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn validate_node_payload(
+    name: &str,
+    host: &str,
+    port: i32,
+    protocol: &str,
+    description: Option<&str>,
+    max_connections: i32,
+    network_name: &str,
+    network_secret: Option<&str>,
+    qq_number: Option<&str>,
+    wechat: Option<&str>,
+    mail: Option<&str>,
+    require_contact: bool,
+) -> AppResult<()> {
+    validate_non_empty("name", name, 100)?;
+    validate_non_empty("host", host, 255)?;
+    validate_non_empty("protocol", protocol, 20)?;
+    validate_non_empty("network_name", network_name, 100)?;
+    validate_optional("description", description, 500)?;
+    validate_optional("network_secret", network_secret, 100)?;
+    validate_optional("qq_number", qq_number, 20)?;
+    validate_optional("wechat", wechat, 50)?;
+    validate_optional("mail", mail, 255)?;
+
+    if !(1..=65_535).contains(&port) {
+        return Err(AppError::BadRequest(
+            "port must be between 1 and 65535".to_string(),
+        ));
+    }
+
+    if !(1..=10_000).contains(&max_connections) {
+        return Err(AppError::BadRequest(
+            "max_connections must be between 1 and 10000".to_string(),
+        ));
+    }
+
+    if require_contact {
+        let has_contact = qq_number.is_some_and(|value| !value.trim().is_empty())
+            || wechat.is_some_and(|value| !value.trim().is_empty())
+            || mail.is_some_and(|value| !value.trim().is_empty());
+
+        if !has_contact {
+            return Err(AppError::BadRequest(
+                "at least one contact field must be provided".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_non_empty(field: &str, value: &str, max_len: usize) -> AppResult<()> {

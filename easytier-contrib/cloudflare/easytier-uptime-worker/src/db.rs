@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::BTreeSet};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -9,8 +9,9 @@ use crate::{
     config::AppConfig,
     error::{AppError, AppResult},
     models::{
-        CreateNodeRequest, HealthFilterParams, HealthRecordResponse, HealthStatsResponse,
-        NodeFilterParams, NodeResponse, PaginatedResponse, PaginationParams, now_iso,
+        AdminNodeFilterParams, CreateNodeRequest, HealthFilterParams, HealthRecordResponse,
+        HealthStatsResponse, NodeFilterParams, NodeResponse, PaginatedResponse, PaginationParams,
+        UpdateNodeRequest, now_iso,
     },
 };
 
@@ -204,6 +205,72 @@ pub async fn list_nodes(
     })
 }
 
+pub async fn list_admin_nodes(
+    env: &worker::Env,
+    config: &AppConfig,
+    pagination: &PaginationParams,
+    filters: &AdminNodeFilterParams,
+) -> AppResult<PaginatedResponse<NodeResponse>> {
+    let page = pagination.page();
+    let per_page = pagination.per_page(200, 500);
+    let offset = (page - 1) * per_page;
+
+    let (where_sql, params) = build_admin_node_filters(filters);
+    let count_sql = format!("SELECT COUNT(*) AS total FROM shared_nodes n{where_sql}");
+    let total = fetch_count(env, &count_sql, &params).await? as u64;
+
+    let mut list_params = params.clone();
+    list_params.push(json!(per_page));
+    list_params.push(json!(offset));
+
+    let list_sql = format!(
+        "SELECT
+            n.id,
+            n.name,
+            n.host,
+            n.port,
+            n.protocol,
+            n.version,
+            n.allow_relay,
+            n.network_name,
+            n.network_secret,
+            n.description,
+            n.max_connections,
+            n.current_connections,
+            n.is_active,
+            n.is_approved,
+            n.qq_number,
+            n.wechat,
+            n.mail,
+            n.created_at,
+            n.updated_at
+        FROM shared_nodes n
+        {where_sql}
+        ORDER BY n.created_at DESC
+        LIMIT ? OFFSET ?"
+    );
+
+    let rows: Vec<SharedNodeRow> = query_all(env, &list_sql, &list_params).await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(build_node_response(env, config, row, false).await?);
+    }
+
+    let total_pages = if total == 0 {
+        0
+    } else {
+        ((total + u64::from(per_page) - 1) / u64::from(per_page)) as u32
+    };
+
+    Ok(PaginatedResponse {
+        items,
+        total,
+        page,
+        per_page,
+        total_pages,
+    })
+}
+
 pub async fn get_all_tags(env: &worker::Env) -> AppResult<Vec<String>> {
     let rows: Vec<TagRow> = query_all(
         env,
@@ -281,6 +348,135 @@ pub async fn get_node_connect_url(env: &worker::Env, node_id: i32) -> AppResult<
     Ok(format!("{}://{}:{}", row.protocol, row.host, row.port))
 }
 
+pub async fn set_node_approval(
+    env: &worker::Env,
+    node_id: i32,
+    approved: bool,
+) -> AppResult<NodeResponse> {
+    fetch_node_row(env, node_id, false).await?;
+    let db = env.d1(DB_BINDING)?;
+    let timestamp = now_iso();
+    query!(
+        &db,
+        "UPDATE shared_nodes SET is_approved = ?, updated_at = ? WHERE id = ?",
+        &approved,
+        &timestamp,
+        &node_id
+    )?
+    .run()
+    .await?;
+    get_node(env, node_id, false).await
+}
+
+pub async fn update_node(
+    env: &worker::Env,
+    node_id: i32,
+    request: &UpdateNodeRequest,
+) -> AppResult<NodeResponse> {
+    let current = fetch_node_row(env, node_id, false).await?;
+
+    let name = request.name.clone().unwrap_or(current.name.clone());
+    let host = request.host.clone().unwrap_or(current.host.clone());
+    let port = request.port.unwrap_or(current.port);
+    let protocol = request.protocol.clone().unwrap_or(current.protocol.clone());
+    let description = request
+        .description
+        .clone()
+        .or(current.description.clone())
+        .unwrap_or_default();
+    let max_connections = request.max_connections.unwrap_or(current.max_connections);
+    let is_active = request.is_active.unwrap_or(current.is_active != 0);
+    let allow_relay = request.allow_relay.unwrap_or(current.allow_relay != 0);
+    let network_name = request
+        .network_name
+        .clone()
+        .or(current.network_name.clone())
+        .unwrap_or_default();
+    let network_secret = request
+        .network_secret
+        .clone()
+        .or(current.network_secret.clone())
+        .unwrap_or_default();
+    let qq_number = request
+        .qq_number
+        .clone()
+        .or(current.qq_number.clone())
+        .unwrap_or_default();
+    let wechat = request
+        .wechat
+        .clone()
+        .or(current.wechat.clone())
+        .unwrap_or_default();
+    let mail = request
+        .mail
+        .clone()
+        .or(current.mail.clone())
+        .unwrap_or_default();
+
+    let changed_identity =
+        host != current.host || port != current.port || protocol != current.protocol;
+    if changed_identity && node_exists(env, &host, port, &protocol).await? {
+        return Err(AppError::Conflict(
+            "a node with the same host, port and protocol already exists".to_string(),
+        ));
+    }
+
+    let db = env.d1(DB_BINDING)?;
+    let timestamp = now_iso();
+    query!(
+        &db,
+        "UPDATE shared_nodes
+         SET
+            name = ?,
+            host = ?,
+            port = ?,
+            protocol = ?,
+            description = ?,
+            max_connections = ?,
+            is_active = ?,
+            allow_relay = ?,
+            network_name = ?,
+            network_secret = ?,
+            qq_number = ?,
+            wechat = ?,
+            mail = ?,
+            updated_at = ?
+         WHERE id = ?",
+        &name,
+        &host,
+        &port,
+        &protocol,
+        &description,
+        &max_connections,
+        &is_active,
+        &allow_relay,
+        &network_name,
+        &network_secret,
+        &qq_number,
+        &wechat,
+        &mail,
+        &timestamp,
+        &node_id
+    )?
+    .run()
+    .await?;
+
+    if let Some(tags) = &request.tags {
+        replace_node_tags(env, node_id, tags).await?;
+    }
+
+    get_node(env, node_id, false).await
+}
+
+pub async fn delete_node(env: &worker::Env, node_id: i32) -> AppResult<()> {
+    fetch_node_row(env, node_id, false).await?;
+    let db = env.d1(DB_BINDING)?;
+    query!(&db, "DELETE FROM shared_nodes WHERE id = ?", &node_id)?
+        .run()
+        .await?;
+    Ok(())
+}
+
 fn build_node_filters(filters: &NodeFilterParams, public_only: bool) -> (String, Vec<Value>) {
     let mut clauses = Vec::new();
     let mut params = Vec::new();
@@ -323,6 +519,64 @@ fn build_node_filters(filters: &NodeFilterParams, public_only: bool) -> (String,
             placeholders(filters.tags.len())
         ));
         for tag in &filters.tags {
+            params.push(json!(tag));
+        }
+    }
+
+    if clauses.is_empty() {
+        (String::new(), params)
+    } else {
+        (format!(" WHERE {}", clauses.join(" AND ")), params)
+    }
+}
+
+fn build_admin_node_filters(filters: &AdminNodeFilterParams) -> (String, Vec<Value>) {
+    let mut clauses = Vec::new();
+    let mut params = Vec::new();
+
+    if let Some(is_active) = filters.is_active {
+        clauses.push("n.is_active = ?".to_string());
+        params.push(json!(if is_active { 1 } else { 0 }));
+    }
+
+    if let Some(is_approved) = filters.is_approved {
+        clauses.push("n.is_approved = ?".to_string());
+        params.push(json!(if is_approved { 1 } else { 0 }));
+    }
+
+    if let Some(protocol) = filters
+        .protocol
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        clauses.push("LOWER(n.protocol) = LOWER(?)".to_string());
+        params.push(json!(protocol));
+    }
+
+    if let Some(search) = filters
+        .search
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let search = format!("%{}%", search.trim());
+        clauses.push(
+            "(n.name LIKE ? OR n.host LIKE ? OR COALESCE(n.description, '') LIKE ?)".to_string(),
+        );
+        params.push(json!(search));
+        params.push(json!(search));
+        params.push(json!(search));
+    }
+
+    let tags = normalize_filter_tags(
+        filters.tag.clone(),
+        filters.tags.clone().unwrap_or_default(),
+    );
+    if !tags.is_empty() {
+        clauses.push(format!(
+            "n.id IN (SELECT DISTINCT node_id FROM node_tags WHERE tag IN ({}))",
+            placeholders(tags.len())
+        ));
+        for tag in tags {
             params.push(json!(tag));
         }
     }
@@ -604,6 +858,28 @@ async fn get_node_tags(env: &worker::Env, node_id: i32) -> AppResult<Vec<String>
     Ok(rows.into_iter().map(|row| row.tag).collect())
 }
 
+async fn replace_node_tags(env: &worker::Env, node_id: i32, tags: &[String]) -> AppResult<()> {
+    let db = env.d1(DB_BINDING)?;
+    query!(&db, "DELETE FROM node_tags WHERE node_id = ?", &node_id)?
+        .run()
+        .await?;
+
+    let timestamp = now_iso();
+    for tag in normalize_tags(tags) {
+        query!(
+            &db,
+            "INSERT OR IGNORE INTO node_tags (node_id, tag, created_at) VALUES (?, ?, ?)",
+            &node_id,
+            &tag,
+            &timestamp
+        )?
+        .run()
+        .await?;
+    }
+
+    Ok(())
+}
+
 async fn get_latest_health_record(
     env: &worker::Env,
     node_id: i32,
@@ -726,6 +1002,25 @@ fn empty_to_none(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn normalize_tags(tags: &[String]) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for tag in tags {
+        let trimmed = tag.trim();
+        if !trimmed.is_empty() {
+            set.insert(trimmed.to_string());
+        }
+    }
+    set.into_iter().collect()
+}
+
+fn normalize_filter_tags(single_tag: Option<String>, tags: Vec<String>) -> Vec<String> {
+    let mut merged = tags;
+    if let Some(single_tag) = single_tag {
+        merged.push(single_tag);
+    }
+    normalize_tags(&merged)
 }
 
 impl From<HealthRecordRow> for HealthRecordResponse {

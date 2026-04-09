@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod db;
 mod error;
@@ -7,14 +8,15 @@ mod probe;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use config::AppConfig;
 use error::AppResult;
 use models::{
-    ApiResponse, CreateNodeRequest, HealthFilterParams, HealthStatsParams, NodeFilterParams,
-    PaginationParams,
+    AdminLoginRequest, AdminNodeFilterParams, ApiResponse, CreateNodeRequest, HealthFilterParams,
+    HealthStatsParams, NodeFilterParams, PaginationParams, UpdateNodeRequest,
 };
 use tower_http::cors::CorsLayer;
 use tower_service::Service;
@@ -38,6 +40,15 @@ fn router(state: AppState) -> Router {
         .route("/api/test_connection", post(test_connection))
         .route("/api/nodes/{id}/health", get(get_node_health))
         .route("/api/nodes/{id}/health/stats", get(get_node_health_stats))
+        .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/verify", get(admin_verify_token))
+        .route("/api/admin/nodes", get(admin_get_nodes))
+        .route("/api/admin/nodes/{id}/approve", put(admin_approve_node))
+        .route("/api/admin/nodes/{id}/revoke", put(admin_revoke_node))
+        .route(
+            "/api/admin/nodes/{id}",
+            put(admin_update_node).delete(admin_delete_node),
+        )
         .layer(CorsLayer::very_permissive())
         .with_state(state)
 }
@@ -141,4 +152,81 @@ async fn get_node_connect_url(
     Path(id): Path<i32>,
 ) -> AppResult<String> {
     db::get_node_connect_url(&state.env, id).await
+}
+
+#[worker::send]
+async fn admin_login(
+    State(state): State<AppState>,
+    Json(request): Json<AdminLoginRequest>,
+) -> AppResult<Json<ApiResponse<models::AdminLoginResponse>>> {
+    request.validate()?;
+    let response = auth::login(&state.env, &state.config, &request.password).await?;
+    Ok(Json(ApiResponse::success(response)))
+}
+
+#[worker::send]
+async fn admin_verify_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<ApiResponse<String>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    Ok(Json(ApiResponse::message("Token is valid")))
+}
+
+#[worker::send]
+async fn admin_get_nodes(
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
+    Query(filters): Query<AdminNodeFilterParams>,
+    headers: HeaderMap,
+) -> AppResult<Json<ApiResponse<models::PaginatedResponse<models::NodeResponse>>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    let response = db::list_admin_nodes(&state.env, &state.config, &pagination, &filters).await?;
+    Ok(Json(ApiResponse::success(response)))
+}
+
+#[worker::send]
+async fn admin_approve_node(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+) -> AppResult<Json<ApiResponse<models::NodeResponse>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    let response = db::set_node_approval(&state.env, id, true).await?;
+    Ok(Json(ApiResponse::success(response)))
+}
+
+#[worker::send]
+async fn admin_revoke_node(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+) -> AppResult<Json<ApiResponse<models::NodeResponse>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    let response = db::set_node_approval(&state.env, id, false).await?;
+    Ok(Json(ApiResponse::success(response)))
+}
+
+#[worker::send]
+async fn admin_update_node(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateNodeRequest>,
+) -> AppResult<Json<ApiResponse<models::NodeResponse>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    request.validate()?;
+    let response = db::update_node(&state.env, id, &request).await?;
+    Ok(Json(ApiResponse::success(response)))
+}
+
+#[worker::send]
+async fn admin_delete_node(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+) -> AppResult<Json<ApiResponse<String>>> {
+    auth::require_admin(&state.env, &headers).await?;
+    db::delete_node(&state.env, id).await?;
+    Ok(Json(ApiResponse::message("Node deleted successfully")))
 }
