@@ -3,12 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "build:frontend": "npm --prefix ../../easytier-uptime/frontend ci && npm --prefix ../../easytier-uptime/frontend run build",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "cargo check --target wasm32-unknown-unknown && wrangler deploy --dry-run"
+    "check": "npm run build:frontend && cargo check --target wasm32-unknown-unknown && wrangler deploy --dry-run"
   },
   "devDependencies": {
     "wrangler": "^4.78.0"
   }
 }
-

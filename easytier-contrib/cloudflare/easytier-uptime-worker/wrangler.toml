@@ -4,7 +4,12 @@ compatibility_date = "2026-04-09"
 account_id = "09a207f03f6818f4ab62111b20a34941"
 
 [build]
-command = "cargo install \"worker-build@^0.7.5\" && worker-build --release"
+command = "npm run build:frontend && cargo install \"worker-build@^0.7.5\" && worker-build --release"
+
+[assets]
+directory = "../../easytier-uptime/frontend/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/health", "/healthz", "/node/*"]
 
 [observability.logs]
 enabled = true
