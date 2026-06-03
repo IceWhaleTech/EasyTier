@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use bytes::BytesMut;
-use zerocopy::byteorder::*;
 use zerocopy::AsBytes;
 use zerocopy::FromBytes;
 use zerocopy::FromZeroes;
+use zerocopy::byteorder::*;
 
 type DefaultEndian = LittleEndian;
 
@@ -28,8 +28,17 @@ pub enum UdpPacketType {
     Data = 3,
     Fin = 4,
     HolePunch = 5,
-    V6HolePunch = 6, // when receiving v6 hole punch packet, the packet contains a socket addr of other peer, we
+    V4HolePunch = 6, // when receiving v4 hole punch packet, the packet contains a socket addr of other peer, we
+    // will send a hole punch packet to that peer. we only accept this packet from loopback interface.
+    V6HolePunch = 7, // when receiving v6 hole punch packet, the packet contains a socket addr of other peer, we
                      // will send a hole punch packet to that peer. we only accept this packet from lookback interface.
+}
+
+#[repr(C, packed)]
+#[derive(AsBytes, FromBytes, FromZeroes, Clone, Debug, Default)]
+pub struct V4HolePunchPacket {
+    pub dst_ipv4: [u8; 4],
+    pub dst_port: U16<DefaultEndian>,
 }
 
 #[repr(C, packed)]
@@ -77,6 +86,8 @@ pub enum PacketType {
     NoiseHandshakeMsg1 = 13,
     NoiseHandshakeMsg2 = 14,
     NoiseHandshakeMsg3 = 15,
+    RelayHandshake = 20,
+    RelayHandshakeAck = 21,
 
     // used internally,
     DataWithKcpSrcModified = 18,
@@ -275,14 +286,22 @@ impl ForeignNetworkPacketHeader {
     }
 }
 
-// reserve the space for aes tag and nonce
+// reserve space for AEAD authentication tag and nonce
 #[repr(C, packed)]
-#[derive(AsBytes, FromBytes, FromZeroes, Clone, Debug, Default)]
-pub struct AesGcmTail {
-    pub tag: [u8; 16],
-    pub nonce: [u8; 12],
+#[derive(AsBytes, FromBytes, FromZeroes, Clone, Debug)]
+pub struct AeadTail<const TAG_SIZE: usize, const NONCE_SIZE: usize> {
+    pub tag: [u8; TAG_SIZE],
+    pub nonce: [u8; NONCE_SIZE],
 }
-pub const AES_GCM_ENCRYPTION_RESERVED: usize = std::mem::size_of::<AesGcmTail>();
+
+impl<const TAG_SIZE: usize, const NONCE_SIZE: usize> AeadTail<TAG_SIZE, NONCE_SIZE> {
+    pub const TAG_SIZE: usize = TAG_SIZE;
+    pub const NONCE_SIZE: usize = NONCE_SIZE;
+
+    pub const SIZE: usize = std::mem::size_of::<Self>();
+}
+
+pub type StandardAeadTail = AeadTail<16, 12>;
 
 #[derive(AsBytes, FromZeroes, Clone, Debug, Copy, PartialEq, Hash, Eq)]
 #[repr(u8)]
@@ -313,7 +332,7 @@ impl CompressorTail {
     }
 }
 
-pub const TAIL_RESERVED_SIZE: usize = max(AES_GCM_ENCRYPTION_RESERVED, COMPRESSOR_TAIL_SIZE);
+pub const TAIL_RESERVED_SIZE: usize = max(StandardAeadTail::SIZE, COMPRESSOR_TAIL_SIZE);
 
 #[derive(Default, Debug)]
 pub struct ZCPacketOffsets {
@@ -709,6 +728,17 @@ impl ZCPacket {
         } else {
             None
         }
+    }
+
+    pub fn foreign_network_inner_packet_type(&self) -> Option<u8> {
+        if self.peer_manager_header()?.packet_type != PacketType::ForeignNetworkPacket as u8 {
+            return None;
+        }
+
+        let payload = self.payload();
+        let hdr = ForeignNetworkPacketHeader::ref_from_prefix(payload)?;
+        let inner_packet = payload.get(hdr.get_header_len()..)?;
+        PeerManagerHeader::ref_from_prefix(inner_packet).map(|hdr| hdr.packet_type)
     }
 
     pub fn foreign_network_packet(mut self) -> Self {

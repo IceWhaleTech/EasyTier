@@ -1,7 +1,7 @@
 use axum::{
+    Router,
     http::StatusCode,
     routing::{get, post, put},
-    Router,
 };
 use axum_login::login_required;
 use axum_messages::Message;
@@ -9,17 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::restful::users::Backend;
 
-use super::{
-    users::{AuthSession, Credentials},
-    AppStateInner,
-};
+use std::sync::Arc;
 
-/// Feature flags for the web server
-#[derive(Clone, Default)]
-pub struct FeatureFlags {
-    /// Whether user registration is disabled
-    pub disable_registration: bool,
-}
+use crate::FeatureFlags;
+
+use super::{
+    AppStateInner,
+    users::{AuthSession, Credentials},
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct LoginResult {
@@ -47,7 +44,7 @@ mod put {
     use axum_login::AuthUser;
     use easytier::proto::common::Void;
 
-    use crate::restful::{other_error, users::ChangePassword, HttpHandleError};
+    use crate::restful::{HttpHandleError, other_error, users::ChangePassword};
 
     use super::*;
 
@@ -74,14 +71,14 @@ mod put {
 }
 
 mod post {
-    use axum::{extract::Extension, Json};
+    use axum::{Json, extract::Extension};
     use easytier::proto::common::Void;
 
     use crate::restful::{
-        captcha::extension::{axum_tower_sessions::CaptchaAxumTowerSessionStaticExt, CaptchaUtil},
+        HttpHandleError,
+        captcha::extension::{CaptchaUtil, axum_tower_sessions::CaptchaAxumTowerSessionStaticExt},
         other_error,
         users::RegisterNewUser,
-        HttpHandleError,
     };
 
     use super::*;
@@ -102,7 +99,7 @@ mod post {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json::from(other_error(format!("{:?}", e))),
-                ))
+                ));
             }
         };
 
@@ -117,7 +114,7 @@ mod post {
     }
 
     pub async fn register(
-        Extension(feature_flags): Extension<FeatureFlags>,
+        Extension(feature_flags): Extension<Arc<FeatureFlags>>,
         auth_session: AuthSession,
         captcha_session: tower_sessions::Session,
         Json(req): Json<RegisterNewUser>,
@@ -153,14 +150,15 @@ mod post {
 
 mod get {
     use crate::restful::{
+        HttpHandleError,
         captcha::{
-            builder::spec::SpecCaptcha,
-            extension::{axum_tower_sessions::CaptchaAxumTowerSessionExt as _, CaptchaUtil},
             NewCaptcha as _,
+            builder::spec::SpecCaptcha,
+            extension::{CaptchaUtil, axum_tower_sessions::CaptchaAxumTowerSessionExt as _},
         },
-        other_error, HttpHandleError,
+        other_error,
     };
-    use axum::{response::Response, Json};
+    use axum::{Json, response::Response};
     use easytier::proto::common::Void;
     use tower_sessions::Session;
 
