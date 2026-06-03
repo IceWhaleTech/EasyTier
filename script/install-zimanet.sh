@@ -6,15 +6,11 @@ RAW_URL="${ZIMANET_RAW_URL:-https://raw.githubusercontent.com/IceWhaleTech/EasyT
 RAW_SHA256="${ZIMANET_RAW_SHA256:-8e58e68ba8389a2c0208dfb051b0e9bed48a61df008d1f4b20003ea2b39ac5ae}"
 RAW_PATH="/var/lib/extensions/zimanet.raw"
 SERVICE_NAME="easytier-core.service"
+INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/IceWhaleTech/EasyTier/module/script/install-zimanet.sh"
 
 if [ "$(id -u)" -ne 0 ]; then
-    if command -v sudo >/dev/null 2>&1; then
-        exec sudo env \
-            ZIMANET_RAW_URL="$RAW_URL" \
-            ZIMANET_RAW_SHA256="$RAW_SHA256" \
-            sh "$0"
-    fi
-    echo "Please run as root." >&2
+    echo "Please run as root:" >&2
+    echo "  curl -fsSL $INSTALL_SCRIPT_URL | sudo sh" >&2
     exit 1
 fi
 
